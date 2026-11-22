@@ -516,11 +516,35 @@ function renderGroup(data) {
 
   tbody.addEventListener('click', e => {
     const pill = e.target.closest('.tag-pill');
-    if (!pill) return;
-    const track = data.tracks.find(t => t.name === pill.dataset.source);
-    if (!track) return;
-    applyLabelAndAdvance(data.id, data.tracks, track, pill.dataset.tag, rerenderBody);
+    if (pill) {
+      const track = data.tracks.find(t => t.name === pill.dataset.source);
+      if (track) applyLabelAndAdvance(data.id, data.tracks, track, pill.dataset.tag, rerenderBody);
+      return;
+    }
+    const row = e.target.closest('tr');
+    if (row && e.target.tagName !== 'AUDIO') {
+      e.preventDefault();
+      const track = data.tracks.find(t => t.name === row.dataset.source);
+      if (track) playTrack(track);
+    }
   });
+
+  function playTrack(track) {
+    const url = `/file/${encodeURIComponent(track.folder)}/${encodeURIComponent(track.name)}`;
+    let aud = document.querySelector(`audio[src="${url}"]`);
+    if (!aud) {
+      aud = document.createElement('audio');
+      aud.setAttribute('src', url);
+      aud.setAttribute('preload', 'metadata');
+      aud.addEventListener('play', () => bindAudioToBar(aud), { once: true });
+      const row = document.querySelector(`tr[data-source="${track.name}"]`);
+      row?.querySelector('.preview-col')?.appendChild(aud);
+    }
+    if (singlePlayEl.checked) {
+      document.querySelectorAll('audio').forEach(a => { if (a !== aud && !a.paused) a.pause(); });
+    }
+    aud.play();
+  }
 
   async function runSave(btn, onlyTagged) {
     recomputeGroupDraftNames(data.tracks);
