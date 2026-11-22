@@ -13,6 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent
 WORK_DIR = BASE_DIR / "output"
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 
+
 class AWCHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
@@ -28,7 +29,7 @@ class AWCHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-            
+
         elif path == "/app.js":
             body = (BASE_DIR / "app.js").read_bytes()
             self.send_response(200)
@@ -133,6 +134,56 @@ class AWCHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
+        elif parsed.path == "/save_labels":
+            length = int(self.headers.get("Content-Length", 0))
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            folder = Path(payload.get("folder", "")).name
+            labels = payload.get("labels", {})
+            src_dir = (WORK_DIR / folder).resolve()
+            if WORK_DIR.resolve() not in src_dir.parents or not src_dir.is_dir():
+                self.send_error(404)
+                return
+            clean = {Path(k).name: str(v) for k, v in labels.items() if v}
+            (src_dir / "labels.json").write_text(json.dumps(clean, indent=2), encoding="utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        elif parsed.path == "/save_track":
+            length = int(self.headers.get("Content-Length", 0))
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            folder = Path(payload.get("folder", "")).name
+            items = payload.get("items", [])
+            src_dir = (WORK_DIR / folder).resolve()
+            dst_dir = (WORK_DIR / f"TRACK_{folder}").resolve()
+            if WORK_DIR.resolve() not in src_dir.parents or not src_dir.is_dir():
+                self.send_error(404)
+                return
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            saved = []
+            for item in items:
+                s_name = Path(item.get("source_name", "")).name
+                t_name = Path(item.get("target_name", "")).name
+                src_file = (src_dir / s_name).resolve()
+                if src_file.parent == src_dir and src_file.is_file() and t_name:
+                    dst_file = (dst_dir / t_name).resolve()
+                    if dst_file.parent == dst_dir:
+                        dst_file.write_bytes(src_file.read_bytes())
+                        saved.append(t_name)
+
+            labels_file = src_dir / "labels.json"
+            if labels_file.is_file():
+                (dst_dir / "labels.json").write_bytes(labels_file.read_bytes())
+
+            body = json.dumps({"folder": f"TRACK_{folder}", "saved": saved}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         elif parsed.path == "/clear":
             for f in WORK_DIR.rglob("*"):
                 if f.is_file():
@@ -144,6 +195,7 @@ class AWCHandler(BaseHTTPRequestHandler):
             self.end_headers()
         else:
             self.send_error(404)
+
 
 if __name__ == "__main__":
     server = ThreadingHTTPServer(("127.0.0.1", PORT), AWCHandler)

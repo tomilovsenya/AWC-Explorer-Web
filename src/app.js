@@ -3,6 +3,7 @@ const statusEl = document.getElementById('status');
 const resultsEl = document.getElementById('results');
 const zipAllBtn = document.getElementById('zipAllBtn');
 const singlePlayEl = document.getElementById('singlePlay');
+const autoPlayOnLabelEl = document.getElementById('autoPlayOnLabel');
 const overlayEl = document.getElementById('globalDropOverlay');
 
 const playerBar = document.getElementById('playerBar');
@@ -15,6 +16,8 @@ const waveCtx = pbWave.getContext('2d');
 const pbTime = document.getElementById('pbTime');
 const autoNextEl = document.getElementById('autoNext');
 const loopFadeEl = document.getElementById('loopFade');
+
+const ROLE_TAGS = ['INTRO', 'OUTRO', 'LEAD', 'DRUMS', 'PERC', 'BASS', 'PAD', 'SYNTH', 'OTHER', 'CALM'];
 
 let activeAudio = null;
 let isSeeking = false;
@@ -40,6 +43,46 @@ function formatBytes(bytes) {
   return `${(bytes / 1048576).toFixed(2)} MB`;
 }
 
+function recomputeGroupDraftNames(tracks) {
+  const counts = new Map();
+  tracks.forEach(t => {
+    if (!t.tag) {
+      t.draftName = t.name;
+      return;
+    }
+    const nextNum = (counts.get(t.tag) || 0) + 1;
+    counts.set(t.tag, nextNum);
+
+    const dot = t.name.lastIndexOf('.');
+    const ext = dot >= 0 ? t.name.slice(dot) : '';
+    const idMatch = t.name.match(/^(\d+)/);
+    const prefix = idMatch ? idMatch[1] : (t.folder || 'TRACK');
+    t.draftName = `${prefix}_${t.tag}_${nextNum}${ext}`;
+  });
+}
+
+function persistGroupLabels(folderId, tracks) {
+  const labels = {};
+  tracks.forEach(t => {
+    if (t.tag) labels[t.name] = t.tag;
+  });
+  fetch('/save_labels', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folder: folderId, labels })
+  }).catch(() => {});
+}
+
+function applyLabelAndAdvance(folderId, tracks, track, tag, rerenderFn) {
+  track.tag = tag;
+  recomputeGroupDraftNames(tracks);
+  persistGroupLabels(folderId, tracks);
+  rerenderFn?.();
+  if (autoPlayOnLabelEl?.checked) {
+    stepTrack(1);
+  }
+}
+
 function stopXfadeLoop() {
   if (!xfadeState) return;
   xfadeState.active = false;
@@ -53,6 +96,7 @@ function getXfadeCurrentTime() {
   if (!xfadeState || !audioCtx) return 0;
   return Math.max(0, (audioCtx.currentTime - xfadeState.cycleStartCtxTime) % xfadeState.stepDur);
 }
+
 function startXfadeLoop(url, offsetSec = 0) {
   stopXfadeLoop();
   const audioBuf = bufferCache.get(url);
@@ -163,6 +207,7 @@ async function loadWaveform(url) {
     }
   } catch (_) { currentPeaks = null; }
 }
+
 function drawWaveform(progress) {
   const dpr = window.devicePixelRatio || 1;
   const rect = pbWaveWrap.getBoundingClientRect();
@@ -217,7 +262,7 @@ function bindAudioToBar(aud) {
   playerBar.classList.remove('hidden');
   const row = aud.closest('tr');
   row?.classList.add('playing-row');
-  pbTitle.textContent = row?.querySelector('code')?.textContent || 'Audio Track';
+  pbTitle.textContent = row?.querySelector('.track-label')?.textContent || 'Audio Track';
   const chCell = row?.firstElementChild?.nextElementSibling;
   pbSub.textContent = chCell ? chCell.textContent : '';
   pbPlayBtn.textContent = aud.paused ? '▶' : '⏸';
@@ -257,6 +302,7 @@ window.addEventListener('resize', () => {
   if (xfadeState?.active) drawWaveform(getXfadeCurrentTime() / xfadeState.dur);
   else if (activeAudio?.duration) drawWaveform(activeAudio.currentTime / activeAudio.duration);
 });
+
 document.addEventListener('play', e => {
   if (e.target.tagName !== 'AUDIO') return;
   if (singlePlayEl.checked) {
@@ -316,6 +362,20 @@ window.addEventListener('keydown', e => {
   if (e.code === 'Space') { e.preventDefault(); toggleActivePlay(); }
   else if (e.code === 'ArrowDown') { e.preventDefault(); stepTrack(1); }
   else if (e.code === 'ArrowUp') { e.preventDefault(); stepTrack(-1); }
+  else if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+    const num = Number(e.key);
+    if (num >= 1 && num <= ROLE_TAGS.length && activeAudio) {
+      e.preventDefault();
+      const row = activeAudio.closest('tr');
+      const tbody = row?.closest('tbody');
+      const sourceName = row?.dataset.source;
+      const tracks = tbody?._tracks;
+      const track = tracks?.find(t => t.name === sourceName);
+      if (track) {
+        applyLabelAndAdvance(tbody._folderId, tracks, track, ROLE_TAGS[num - 1], tbody._rerender);
+      }
+    }
+  }
 });
 
 window.addEventListener('dragenter', e => {
@@ -362,13 +422,21 @@ async function handleFiles(fileList) {
 function buildRowsHtml(tracks) {
   return tracks.map(t => {
     const url = `/file/${encodeURIComponent(t.folder)}/${encodeURIComponent(t.name)}`;
-    return `<tr>
-      <td><code>${t.folder}/${t.name}</code></td>
+    const displayName = t.draftName || t.name;
+    const pills = ROLE_TAGS.map((tag, i) => {
+      const active = t.tag === tag ? ' active' : '';
+      return `<button type="button" class="tag-pill${active}" data-source="${t.name}" data-tag="${tag}" title="Shortcut: ${i + 1}">${i + 1}:${tag}</button>`;
+    }).join('');
+    return `<tr data-source="${t.name}">
+      <td>
+        <code class="track-label">${displayName}</code>
+        <span class="tag-pills">${pills}</span>
+      </td>
       <td>${t.channels === 2 ? 'Stereo' : 'Mono'}</td>
       <td>${t.duration}s</td>
       <td>${formatBytes(t.size)}</td>
       <td class="preview-col"><audio controls preload="metadata" src="${url}"></audio></td>
-      <td><a class="dl" href="${url}" download="${t.name}">Download</a></td>
+      <td><a class="dl" href="${url}" download="${displayName}">Download</a></td>
     </tr>`;
   }).join('');
 }
@@ -381,8 +449,12 @@ function renderGroup(data) {
     resultsEl.prepend(div);
     return;
   }
+
+  recomputeGroupDraftNames(data.tracks);
+
   let sortKey = 'path';
   let sortAsc = true;
+  let visibleTracks = data.tracks;
   const totalBytes = data.tracks.reduce((sum, t) => sum + (t.size || 0), 0);
   const cacheBadge = data.cached ? `<span class="badge" style="color:#4ade80;">Cached</span>` : '';
 
@@ -395,7 +467,11 @@ function renderGroup(data) {
         <span class="badge">${data.tracks.length} streams</span>
         ${cacheBadge}
       </div>
-      <a class="dl" href="/zip/${encodeURIComponent(data.id)}">Download ${data.id}.zip</a>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button type="button" class="secondary save-sorted-btn">Save Sorted (TRACK_${data.id})</button>
+        <button type="button" class="secondary save-track-btn">Save All (TRACK_${data.id})</button>
+        <a class="dl" href="/zip/${encodeURIComponent(data.id)}">Download ${data.id}.zip</a>
+      </div>
     </div>
     <table>
       <thead>
@@ -408,10 +484,73 @@ function renderGroup(data) {
           <th>File</th>
         </tr>
       </thead>
-      <tbody>${buildRowsHtml(data.tracks)}</tbody>
+      <tbody>${buildRowsHtml(visibleTracks)}</tbody>
     </table>`;
 
   const tbody = div.querySelector('tbody');
+  const saveSortedBtn = div.querySelector('.save-sorted-btn');
+  const saveBtn = div.querySelector('.save-track-btn');
+
+  function rerenderBody() {
+    const activeSrc = activeAudio?.getAttribute('src');
+    const wasPlaying = Boolean(activeAudio && !activeAudio.paused);
+    const prevTime = activeAudio?.currentTime || 0;
+    tbody.innerHTML = buildRowsHtml(visibleTracks);
+    if (activeSrc) {
+      const matchAud = Array.from(tbody.querySelectorAll('audio')).find(a => a.getAttribute('src') === activeSrc);
+      if (matchAud) {
+        activeAudio = matchAud;
+        matchAud.closest('tr')?.classList.add('playing-row');
+        pbTitle.textContent = matchAud.closest('tr')?.querySelector('.track-label')?.textContent || pbTitle.textContent;
+        if (!xfadeState?.active) {
+          matchAud.currentTime = prevTime;
+          if (wasPlaying) matchAud.play().catch(() => {});
+        }
+      }
+    }
+  }
+
+  tbody._folderId = data.id;
+  tbody._tracks = data.tracks;
+  tbody._rerender = rerenderBody;
+
+  tbody.addEventListener('click', e => {
+    const pill = e.target.closest('.tag-pill');
+    if (!pill) return;
+    const track = data.tracks.find(t => t.name === pill.dataset.source);
+    if (!track) return;
+    applyLabelAndAdvance(data.id, data.tracks, track, pill.dataset.tag, rerenderBody);
+  });
+
+  async function runSave(btn, onlyTagged) {
+    recomputeGroupDraftNames(data.tracks);
+    const sourceTracks = onlyTagged ? data.tracks.filter(t => Boolean(t.tag)) : data.tracks;
+    if (!sourceTracks.length) {
+      statusEl.textContent = `No labeled bits to save for ${data.id}.`;
+      return;
+    }
+    btn.disabled = true;
+    statusEl.textContent = `Saving ${sourceTracks.length} bit(s) to TRACK_${data.id}...`;
+    try {
+      const items = sourceTracks.map(t => ({
+        source_name: t.name,
+        target_name: t.draftName || t.name
+      }));
+      const res = await fetch('/save_track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder: data.id, items })
+      });
+      const out = await res.json();
+      statusEl.textContent = `Saved ${(out.saved || []).length} files to output/${out.folder}/`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  saveSortedBtn.addEventListener('click', () => runSave(saveSortedBtn, true));
+  saveBtn.addEventListener('click', () => runSave(saveBtn, false));
+
   const headers = div.querySelectorAll('th.sortable');
   headers.forEach(th => {
     th.addEventListener('click', () => {
@@ -419,15 +558,16 @@ function renderGroup(data) {
       sortAsc = (sortKey === key) ? !sortAsc : (key === 'path');
       sortKey = key;
       headers.forEach(h => { h.querySelector('.arrow').textContent = h.dataset.sort === sortKey ? (sortAsc ? '▲' : '▼') : ''; });
-      const sorted = Array.from(data.tracks).sort((a, b) => {
+      visibleTracks = Array.from(data.tracks).sort((a, b) => {
         if (sortKey === 'duration') return sortAsc ? (a.duration - b.duration) : (b.duration - a.duration);
         if (sortKey === 'size') return sortAsc ? ((a.size || 0) - (b.size || 0)) : ((b.size || 0) - (a.size || 0));
-        const pA = `${a.folder}/${a.name}`, pB = `${b.folder}/${b.name}`;
+        const pA = `${a.folder}/${a.draftName || a.name}`, pB = `${b.folder}/${b.draftName || b.name}`;
         return sortAsc ? pA.localeCompare(pB, undefined, { numeric: true }) : pB.localeCompare(pA, undefined, { numeric: true });
       });
-      tbody.innerHTML = buildRowsHtml(sorted);
+      rerenderBody();
     });
   });
+
   resultsEl.prepend(div);
 }
 

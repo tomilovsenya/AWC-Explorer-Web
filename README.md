@@ -46,6 +46,8 @@ A fast, multi-core `.awc` (Audio Wave Container) extractor and browser-based aud
    ```bash
    python awc_web_ui.py
    ```
+
+   Alternatively, you can open the .py file with Python.
 3. Your browser will open automatically to `http://127.0.0.1:8765`.
 4. Select your desired output format (`OPUS`, `WAV`, `OGG`, or `FLAC`) and drag and drop one or more `.awc` files anywhere onto the page.
 5. Extracted tracks are saved automatically to:

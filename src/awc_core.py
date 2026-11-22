@@ -1,9 +1,11 @@
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import json
 import os
 from pathlib import Path
 import re
 import struct
 import subprocess
+
 
 def _build_crc_table() -> tuple[int, ...]:
     table = []
@@ -15,7 +17,9 @@ def _build_crc_table() -> tuple[int, ...]:
         table.append(r)
     return tuple(table)
 
+
 _CRC_TABLE = _build_crc_table()
+
 
 def ogg_crc(data: bytes) -> int:
     crc = 0
@@ -23,6 +27,7 @@ def ogg_crc(data: bytes) -> int:
     for b in data:
         crc = ((crc << 8) & 0xFFFFFFFF) ^ tbl[((crc >> 24) ^ b) & 0xFF]
     return crc
+
 
 def make_ogg_page(payload: bytes, serial: int, seq: int, granule: int, flags: int = 0) -> bytes:
     rem = len(payload)
@@ -33,6 +38,7 @@ def make_ogg_page(payload: bytes, serial: int, seq: int, granule: int, flags: in
     crc = ogg_crc(hdr_zero + payload)
     hdr = struct.pack("<4sBBqIIIB", b"OggS", 0, flags, granule, serial, seq, crc, len(lacing)) + lacing
     return hdr + payload
+
 
 def opus_packet_samples(pkt: bytes) -> int:
     toc = pkt[0]
@@ -53,6 +59,7 @@ def opus_packet_samples(pkt: bytes) -> int:
         frames = (pkt[1] & 0x3F) if len(pkt) > 1 else 1
     return samples * frames
 
+
 def build_ogg_opus(packets: list[bytes], channels: int, sample_rate: int = 48000, serial: int = 1) -> bytes:
     out = bytearray()
     opus_head = struct.pack("<8sBBHIhB", b"OpusHead", 1, channels, 312, sample_rate, 0, 0)
@@ -69,12 +76,14 @@ def build_ogg_opus(packets: list[bytes], channels: int, sample_rate: int = 48000
         out += make_ogg_page(pkt, serial, i + 2, granule, flags=(0x04 if is_last else 0x00))
     return bytes(out)
 
+
 def get_base_id(stem: str) -> str:
     m = re.search(r"audio_sound_(\d+)", stem, re.IGNORECASE)
     if m:
         return m.group(1)
     m_fallback = re.search(r"(\d+)", stem)
     return m_fallback.group(1) if m_fallback else stem
+
 
 def find_data_chunks(data: bytes, flags: int, sc: int, hdr_sz: int) -> list[tuple[int, int]]:
     chunks = []
@@ -117,6 +126,7 @@ def find_data_chunks(data: bytes, flags: int, sc: int, hdr_sz: int) -> list[tupl
                     chunks.append((coff, sz))
     return chunks
 
+
 def convert_worker(blob: bytes, out_file_str: str, ext: str, serial: int):
     out_file = Path(out_file_str)
     packets = []
@@ -140,7 +150,6 @@ def convert_worker(blob: bytes, out_file_str: str, ext: str, serial: int):
     ogg_bytes = build_ogg_opus(packets, channels, 48000, serial=serial)
 
     if ext.lower() in ("ogg", "opus"):
-        # Write valid Ogg Opus directly with zero FFmpeg process overhead
         out_file.write_bytes(ogg_bytes)
     else:
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", "pipe:0", str(out_file)]
@@ -155,13 +164,82 @@ def convert_worker(blob: bytes, out_file_str: str, ext: str, serial: int):
         "size": out_file.stat().st_size,
     }
 
+
 _POOL: ProcessPoolExecutor | None = None
+
 
 def get_pool() -> ProcessPoolExecutor:
     global _POOL
     if _POOL is None:
         _POOL = ProcessPoolExecutor(max_workers=(os.cpu_count() or 4))
     return _POOL
+
+
+def _probe_wav(path: Path) -> tuple[int, float]:
+    data = path.read_bytes()
+    if len(data) >= 44 and data[:4] == b"RIFF":
+        ch, sr, byte_rate = struct.unpack_from("<HII", data, 22)
+        dur = max(0.0, (len(data) - 44) / byte_rate) if byte_rate else 0.0
+        return ch, round(dur, 2)
+    return 1, 0.0
+
+
+def _probe_ogg_opus(path: Path) -> tuple[int, float]:
+    data = path.read_bytes()
+    channels = 1
+    head_pos = data.find(b"OpusHead")
+    if head_pos != -1 and head_pos + 10 <= len(data):
+        channels = data[head_pos + 9]
+
+    last_oggs = data.rfind(b"OggS")
+    dur = 0.0
+    if last_oggs != -1 and last_oggs + 14 <= len(data):
+        granule, = struct.unpack_from("<q", data, last_oggs + 6)
+        if granule > 312:
+            dur = round((granule - 312) / 48000.0, 2)
+    return channels, dur
+
+
+def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: str) -> None:
+    saved_map: dict[str, str] = {}
+    for candidate_dir in (work_dir / base_id, work_dir / f"TRACK_{base_id}"):
+        labels_file = candidate_dir / "labels.json"
+        if labels_file.is_file():
+            try:
+                raw = json.loads(labels_file.read_text(encoding="utf-8"))
+                if isinstance(raw, dict) and raw:
+                    saved_map = {str(k): str(v) for k, v in raw.items() if v}
+                    break
+            except (OSError, ValueError):
+                pass
+
+    # Fallback: match already-exported files in ./output/TRACK_<ID>/ by (size, duration)
+    track_dir = work_dir / f"TRACK_{base_id}"
+    by_sig: dict[tuple[int, float], list[str]] = {}
+    if track_dir.is_dir():
+        pat = re.compile(rf"^{re.escape(base_id)}_([A-Z0-9]+)_\d+\.{re.escape(ext)}$", re.I)
+        for f in sorted(track_dir.glob(f"{base_id}_*_*.{ext}")):
+            m = pat.match(f.name)
+            if not m:
+                continue
+            tag = m.group(1).upper()
+            if ext.lower() == "wav":
+                _, dur = _probe_wav(f)
+            elif ext.lower() in ("opus", "ogg"):
+                _, dur = _probe_ogg_opus(f)
+            else:
+                dur = 0.0
+            by_sig.setdefault((f.stat().st_size, dur), []).append(tag)
+
+    for t in tracks:
+        tag = saved_map.get(t["name"])
+        if not tag:
+            candidates = by_sig.get((t.get("size", 0), t.get("duration", 0.0)))
+            if candidates:
+                tag = candidates.pop(0)
+        if tag:
+            t["tag"] = tag
+
 
 def process_awc_bytes(filename: str, data: bytes, work_dir: Path, ext: str) -> dict:
     if len(data) < 16 or data[:4] != b"ADAT":
@@ -193,31 +271,9 @@ def process_awc_bytes(filename: str, data: bytes, work_dir: Path, ext: str) -> d
             results[futures[fut]] = res
 
     tracks = [results[idx] for idx in sorted(results)]
+    _apply_saved_labels(base_id, work_dir, tracks, ext)
     return {"file": filename, "id": base_id, "flags": f"0x{flags:08X}", "tracks": tracks}
 
-def _probe_wav(path: Path) -> tuple[int, float]:
-    data = path.read_bytes()
-    if len(data) >= 44 and data[:4] == b"RIFF":
-        ch, sr, byte_rate = struct.unpack_from("<HII", data, 22)
-        dur = max(0.0, (len(data) - 44) / byte_rate) if byte_rate else 0.0
-        return ch, round(dur, 2)
-    return 1, 0.0
-
-def _probe_ogg_opus(path: Path) -> tuple[int, float]:
-    data = path.read_bytes()
-    channels = 1
-    head_pos = data.find(b"OpusHead")
-    if head_pos != -1 and head_pos + 10 <= len(data):
-        channels = data[head_pos + 9]
-
-    # Find last OggS page to read final 48kHz granule position
-    last_oggs = data.rfind(b"OggS")
-    dur = 0.0
-    if last_oggs != -1 and last_oggs + 14 <= len(data):
-        granule, = struct.unpack_from("<q", data, last_oggs + 6)
-        if granule > 312:
-            dur = round((granule - 312) / 48000.0, 2)
-    return channels, dur
 
 def get_cached_awc(filename: str, work_dir: Path, ext: str) -> dict | None:
     base_id = get_base_id(Path(filename).stem)
@@ -245,4 +301,5 @@ def get_cached_awc(filename: str, work_dir: Path, ext: str) -> dict | None:
             "size": f.stat().st_size,
         })
 
+    _apply_saved_labels(base_id, work_dir, tracks, ext)
     return {"file": filename, "id": base_id, "cached": True, "tracks": tracks}
