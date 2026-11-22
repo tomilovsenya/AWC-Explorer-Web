@@ -77,10 +77,21 @@ function applyLabelAndAdvance(folderId, tracks, track, tag, rerenderFn) {
   track.tag = tag;
   recomputeGroupDraftNames(tracks);
   persistGroupLabels(folderId, tracks);
-  rerenderFn?.();
   if (autoPlayOnLabelEl?.checked) {
-    stepTrack(1);
+    const list = Array.from(document.querySelectorAll('audio'));
+    if (list.length > 0) {
+      const idx = activeAudio ? list.indexOf(activeAudio) : -1;
+      const next = list.at((idx + 1 + list.length) % list.length);
+      if (activeAudio) {
+        activeAudio.pause();
+        activeAudio.currentTime = 0;
+      }
+      next.currentTime = 0;
+      next.play().catch(() => {});
+      activeAudio = next;
+    }
   }
+  rerenderFn?.(activeAudio);
 }
 
 function stopXfadeLoop() {
@@ -491,15 +502,15 @@ function renderGroup(data) {
   const saveSortedBtn = div.querySelector('.save-sorted-btn');
   const saveBtn = div.querySelector('.save-track-btn');
 
-  function rerenderBody() {
-    const activeSrc = activeAudio?.getAttribute('src');
-    const wasPlaying = Boolean(activeAudio && !activeAudio.paused);
-    const prevTime = activeAudio?.currentTime || 0;
+  function rerenderBody(activeAudioRef = activeAudio) {
+    const activeSrc = activeAudioRef?.getAttribute('src');
+    const wasPlaying = Boolean(activeAudioRef && !activeAudioRef.paused);
+    const prevTime = activeAudioRef?.currentTime || 0;
     tbody.innerHTML = buildRowsHtml(visibleTracks);
     if (activeSrc) {
       const matchAud = Array.from(tbody.querySelectorAll('audio')).find(a => a.getAttribute('src') === activeSrc);
       if (matchAud) {
-        activeAudio = matchAud;
+        activeAudioRef = matchAud;
         matchAud.closest('tr')?.classList.add('playing-row');
         pbTitle.textContent = matchAud.closest('tr')?.querySelector('.track-label')?.textContent || pbTitle.textContent;
         if (!xfadeState?.active) {
@@ -508,6 +519,7 @@ function renderGroup(data) {
         }
       }
     }
+    return activeAudioRef;
   }
 
   tbody._folderId = data.id;
