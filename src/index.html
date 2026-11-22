@@ -13,6 +13,7 @@
   .controls { display: flex; gap: 12px; align-items: center; }
   select, button { background: var(--card); color: var(--text); border: 1px solid #2d3244; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; }
   button.secondary { background: var(--accent2); border-color: var(--accent2); color: #fff; font-weight: 600; }
+  button.danger { background: #ef4444; border-color: #ef4444; color: #fff; font-weight: 600; }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   .toggle { display: inline-flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid #2d3244; padding: 7px 12px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; user-select: none; }
   .toggle input { accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; margin: 0; }
@@ -74,7 +75,7 @@
         <option value="flac">FLAC (Lossless)</option>
       </select>
       <button id="zipAllBtn" class="secondary" disabled onclick="downloadAllZip()">Download All (.ZIP)</button>
-      <button onclick="clearWorkspace()">Clear</button>
+      <button onclick="clearWorkspace()" class="danger" title="Remove everything from ./output folder?">Clear</button>
     </div>
   </header>
 

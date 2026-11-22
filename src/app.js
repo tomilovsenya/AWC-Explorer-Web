@@ -479,6 +479,7 @@ function renderGroup(data) {
         ${cacheBadge}
       </div>
       <div style="display:flex; gap:8px; align-items:center;">
+        <button type="button" class="secondary close-table-btn">Close</button>
         <button type="button" class="secondary save-sorted-btn">Save Sorted (TRACK_${data.id})</button>
         <button type="button" class="secondary save-track-btn">Save All (TRACK_${data.id})</button>
         <a class="dl" href="/zip/${encodeURIComponent(data.id)}">Download ${data.id}.zip</a>
@@ -605,6 +606,9 @@ function renderGroup(data) {
   });
 
   resultsEl.prepend(div);
+  div.querySelector('.close-table-btn').addEventListener('click', () => {
+    div.remove();
+  });
 }
 
 function downloadAllZip() { window.location.href = '/zip_all'; }
