@@ -350,9 +350,21 @@ function toggleActivePlay() {
     }
   }
   if (!activeAudio) {
-    const first = document.querySelector('audio');
-    if (first) first.play();
-    return;
+    const audios = document.querySelectorAll('audio');
+    for (const audio of audios) {
+      if (audio.src && !audio.paused) {
+        audio.play();
+        return;
+      }
+    }
+    // Find first audio with valid src
+    for (const audio of audios) {
+      if (audio.src) {
+        activeAudio = audio;
+        audio.play();
+        return;
+      }
+    }
   }
   activeAudio.paused ? activeAudio.play() : activeAudio.pause();
 }
@@ -418,13 +430,14 @@ async function handleFiles(fileList) {
     statusEl.textContent = `Checking cache for ${file.name}...`;
     const checkRes = await fetch(`/check?name=${encodeURIComponent(file.name)}&fmt=${fmt}`);
     const checkData = await checkRes.json();
-    if (checkData.cached) { renderGroup(checkData); continue; }
+    if (checkData.cached) { renderGroup(checkData); hidePlayerBarIfNoTables(); continue; }
 
     statusEl.textContent = `Decoding ${file.name} (${(file.size / 1048576).toFixed(2)} MB)...`;
     const res = await fetch(`/upload?name=${encodeURIComponent(file.name)}&fmt=${fmt}`, {
       method: 'POST', body: await file.arrayBuffer()
     });
     renderGroup(await res.json());
+    hidePlayerBarIfNoTables();
   }
   statusEl.textContent = 'Done!';
   zipAllBtn.disabled = false;
@@ -458,6 +471,7 @@ function renderGroup(data) {
   if (data.error) {
     div.innerHTML = `<div class="group-header"><strong>${data.file}</strong><span class="badge" style="color:#f87171;">${data.error}</span></div>`;
     resultsEl.prepend(div);
+    hidePlayerBarIfNoTables();
     return;
   }
 
@@ -606,8 +620,39 @@ function renderGroup(data) {
   });
 
   resultsEl.prepend(div);
+  hidePlayerBarIfNoTables();
   div.querySelector('.close-table-btn').addEventListener('click', () => {
+    const audioEls = div.querySelectorAll('audio');
+    audioEls.forEach(audio => {
+      audio.pause();
+      audio.src = '';
+      audio.load();
+    });
     div.remove();
+    hidePlayerBarIfNoTables();
+    // Select first track from any remaining table
+    const remainingTables = document.querySelectorAll('.group');
+    if (remainingTables.length > 0) {
+      const firstTable = remainingTables[0];
+      const firstTrackRow = firstTable.querySelector('tr[data-source]');
+      if (firstTrackRow) {
+        const trackName = firstTrackRow.dataset.source;
+        // Find track in the table's tracks array
+        const trackData = firstTable._tracks?.find(t => t.name === trackName);
+        if (trackData) {
+          playTrack(trackData);
+        } else {
+          // Fallback: find any audio in the table and play it
+          const audios = firstTable.querySelectorAll('audio');
+          if (audios.length > 0) {
+            const firstAudio = audios[0];
+            if (firstAudio.src) {
+              playTrack({ folder: firstAudio.src.split('/').slice(0, -1).join('/'), name: firstAudio.src.split('/').pop() });
+            }
+          }
+        }
+      }
+    }
   });
 }
 
@@ -626,3 +671,12 @@ async function clearWorkspace() {
   bufferCache.clear();
   playerBar.classList.add('hidden');
 }
+
+function hidePlayerBarIfNoTables() {
+  const tables = resultsEl.querySelectorAll('.group');
+  if (tables.length === 0) {
+    playerBar.classList.add('hidden');
+  }
+}
+
+hidePlayerBarIfNoTables();
