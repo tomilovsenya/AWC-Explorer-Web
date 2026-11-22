@@ -17,7 +17,7 @@ const pbTime = document.getElementById('pbTime');
 const autoNextEl = document.getElementById('autoNext');
 const loopFadeEl = document.getElementById('loopFade');
 
-const ROLE_TAGS = ['INTRO', 'OUTRO', 'LEAD', 'DRUMS', 'PERC', 'BASS', 'PAD', 'SYNTH', 'OTHER', 'CALM'];
+const ROLE_TAGS = ['INTRO', 'OUTRO', 'PAD', 'PERC', 'LEAD', 'BASS', 'DRUMS', 'SYNTH', 'OTHER', 'CALM'];
 
 let activeAudio = null;
 let isSeeking = false;
@@ -364,7 +364,7 @@ window.addEventListener('keydown', e => {
   else if (e.code === 'ArrowUp') { e.preventDefault(); stepTrack(-1); }
   else if (!e.ctrlKey && !e.metaKey && !e.altKey) {
     const num = Number(e.key);
-    if (num >= 1 && num <= ROLE_TAGS.length && activeAudio) {
+    if (num >= 0 && num <= ROLE_TAGS.length && activeAudio) {
       e.preventDefault();
       const row = activeAudio.closest('tr');
       const tbody = row?.closest('tbody');
@@ -372,7 +372,7 @@ window.addEventListener('keydown', e => {
       const tracks = tbody?._tracks;
       const track = tracks?.find(t => t.name === sourceName);
       if (track) {
-        applyLabelAndAdvance(tbody._folderId, tracks, track, ROLE_TAGS[num - 1], tbody._rerender);
+        applyLabelAndAdvance(tbody._folderId, tracks, track, ROLE_TAGS[num], tbody._rerender);
       }
     }
   }
@@ -425,7 +425,7 @@ function buildRowsHtml(tracks) {
     const displayName = t.draftName || t.name;
     const pills = ROLE_TAGS.map((tag, i) => {
       const active = t.tag === tag ? ' active' : '';
-      return `<button type="button" class="tag-pill${active}" data-source="${t.name}" data-tag="${tag}" title="Shortcut: ${i + 1}">${i + 1}:${tag}</button>`;
+      return `<button type="button" class="tag-pill${active}" data-source="${t.name}" data-tag="${tag}" title="Shortcut: ${i}">${i}:${tag}</button>`;
     }).join('');
     return `<tr data-source="${t.name}">
       <td>
