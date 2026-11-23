@@ -3,6 +3,7 @@ const statusEl = document.getElementById('status');
 const resultsEl = document.getElementById('results');
 const zipAllBtn = document.getElementById('zipAllBtn');
 const autoPlayOnLabelEl = document.getElementById('autoPlayOnLabel');
+const autoResortOnLabelEl = document.getElementById('autoResortOnLabel');
 const overlayEl = document.getElementById('globalDropOverlay');
 
 const playerBar = document.getElementById('playerBar');
@@ -117,13 +118,35 @@ function updateGroupRowsDOM(tbody, tracks) {
 }
 
 function applyLabelAndAdvance(folderId, tracks, track, tag, tbody) {
+  const prevVisible = tbody?._visibleTracks ? Array.from(tbody._visibleTracks) : Array.from(tracks);
+  const prevIdx = prevVisible.findIndex(t => t.folder === track.folder && t.name === track.name);
+  let nextUnlabeled = null;
+  if (prevIdx >= 0) {
+    for (let i = prevIdx + 1; i < prevVisible.length; i++) {
+      if (!prevVisible[i].tag) {
+        nextUnlabeled = prevVisible[i];
+        break;
+      }
+    }
+  }
+
   track.tag = tag;
   recomputeGroupDraftNames(tracks);
   persistGroupLabels(folderId, tracks);
-  if (tbody) updateGroupRowsDOM(tbody, tracks);
+
+  const didResort = Boolean(tbody && autoResortOnLabelEl?.checked && tbody._sortByCategory?.());
+  if (tbody && !didResort) {
+    updateGroupRowsDOM(tbody, tracks);
+  }
 
   if (autoPlayOnLabelEl?.checked) {
-    stepTrack(1);
+    if (didResort && nextUnlabeled) {
+      playTrack(nextUnlabeled);
+      const row = tbody.querySelector(`tr[data-source="${CSS.escape(nextUnlabeled.name)}"]`);
+      row?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else {
+      stepTrack(1);
+    }
   }
 }
 
@@ -131,7 +154,9 @@ function stopXfadeLoop() {
   if (!xfadeState) return;
   xfadeState.active = false;
   clearTimeout(xfadeState.timer);
-  xfadeState.sources.forEach(src => { try { src.stop(); src.disconnect(); } catch (_) {} });
+  xfadeState.sources.forEach(src => {
+    try { src.stop(); src.disconnect(); } catch (_) {}
+  });
   xfadeState.sources.clear();
   xfadeState = null;
 }
@@ -152,7 +177,13 @@ function startXfadeLoop(url, offsetSec = 0) {
   const fadeDur = Math.min(dur * 0.4, Math.max(0.04, Math.min(2.5, dur * 0.03)));
   const stepDur = Math.max(0.05, dur - fadeDur);
   const state = {
-    active: true, url, dur, fadeDur, stepDur, timer: null, sources: new Set(),
+    active: true,
+    url,
+    dur,
+    fadeDur,
+    stepDur,
+    timer: null,
+    sources: new Set(),
     cycleStartCtxTime: audioCtx.currentTime - Math.min(offsetSec, stepDur)
   };
   xfadeState = state;
@@ -248,7 +279,9 @@ async function loadWaveform(url) {
       drawWaveform(player.duration ? player.currentTime / player.duration : 0);
       if (loopFadeEl.checked) startXfadeLoop(url, player.currentTime || 0);
     }
-  } catch (_) { currentPeaks = null; }
+  } catch (_) {
+    currentPeaks = null;
+  }
 }
 
 function drawWaveform(progress) {
@@ -256,7 +289,10 @@ function drawWaveform(progress) {
   const rect = pbWaveWrap.getBoundingClientRect();
   const w = Math.max(1, Math.floor(rect.width * dpr));
   const h = Math.max(1, Math.floor(rect.height * dpr));
-  if (pbWave.width !== w || pbWave.height !== h) { pbWave.width = w; pbWave.height = h; }
+  if (pbWave.width !== w || pbWave.height !== h) {
+    pbWave.width = w;
+    pbWave.height = h;
+  }
 
   waveCtx.clearRect(0, 0, w, h);
   const midY = h / 2;
@@ -341,8 +377,14 @@ function seekFromPointer(e) {
   pbTime.textContent = `${fmtTime(player.currentTime)} / ${fmtTime(player.duration)}`;
 }
 
-pbWaveWrap.addEventListener('pointerdown', e => { isSeeking = true; pbWaveWrap.setPointerCapture(e.pointerId); seekFromPointer(e); });
-pbWaveWrap.addEventListener('pointermove', e => { if (isSeeking) seekFromPointer(e); });
+pbWaveWrap.addEventListener('pointerdown', e => {
+  isSeeking = true;
+  pbWaveWrap.setPointerCapture(e.pointerId);
+  seekFromPointer(e);
+});
+pbWaveWrap.addEventListener('pointermove', e => {
+  if (isSeeking) seekFromPointer(e);
+});
 pbWaveWrap.addEventListener('pointerup', e => {
   if (!isSeeking) return;
   isSeeking = false;
@@ -424,10 +466,16 @@ function stepTrack(dir) {
 window.addEventListener('keydown', e => {
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
-  if (e.code === 'Space') { e.preventDefault(); toggleActivePlay(); }
-  else if (e.code === 'ArrowDown') { e.preventDefault(); stepTrack(1); }
-  else if (e.code === 'ArrowUp') { e.preventDefault(); stepTrack(-1); }
-  else if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    toggleActivePlay();
+  } else if (e.code === 'ArrowDown') {
+    e.preventDefault();
+    stepTrack(1);
+  } else if (e.code === 'ArrowUp') {
+    e.preventDefault();
+    stepTrack(-1);
+  } else if (!e.ctrlKey && !e.metaKey && !e.altKey) {
     const num = Number(e.key);
     if (num >= 0 && num < ROLE_TAGS.length && activeTrack) {
       e.preventDefault();
@@ -470,11 +518,16 @@ async function handleFiles(fileList) {
     statusEl.textContent = `Checking cache for ${file.name}...`;
     const checkRes = await fetch(`/check?name=${encodeURIComponent(file.name)}&fmt=${fmt}`);
     const checkData = await checkRes.json();
-    if (checkData.cached) { renderGroup(checkData); hidePlayerBarIfNoTables(); continue; }
+    if (checkData.cached) {
+      renderGroup(checkData);
+      hidePlayerBarIfNoTables();
+      continue;
+    }
 
     statusEl.textContent = `Decoding ${file.name} (${(file.size / 1048576).toFixed(2)} MB)...`;
     const res = await fetch(`/upload?name=${encodeURIComponent(file.name)}&fmt=${fmt}`, {
-      method: 'POST', body: await file.arrayBuffer()
+      method: 'POST',
+      body: await file.arrayBuffer()
     });
     renderGroup(await res.json());
     hidePlayerBarIfNoTables();
@@ -554,10 +607,38 @@ function renderGroup(data) {
   const tbody = div.querySelector('tbody');
   const saveSortedBtn = div.querySelector('.save-sorted-btn');
   const saveBtn = div.querySelector('.save-track-btn');
+  const headers = div.querySelectorAll('th.sortable');
+
+  function sortTracksByKey(key, toggleDirection) {
+    sortAsc = toggleDirection ? ((sortKey === key) ? !sortAsc : (key === 'path' || key === 'category')) : sortAsc;
+    sortKey = key;
+    headers.forEach(h => {
+      h.querySelector('.arrow').textContent = h.dataset.sort === sortKey ? (sortAsc ? '▲' : '▼') : '';
+    });
+    visibleTracks = Array.from(data.tracks).sort((a, b) => {
+      if (sortKey === 'category') {
+        const cA = getCategoryOrder(a);
+        const cB = getCategoryOrder(b);
+        if (cA !== cB) return sortAsc ? (cA - cB) : (cB - cA);
+      }
+      if (sortKey === 'duration') return sortAsc ? (a.duration - b.duration) : (b.duration - a.duration);
+      if (sortKey === 'size') return sortAsc ? ((a.size || 0) - (b.size || 0)) : ((b.size || 0) - (a.size || 0));
+      const pA = `${a.folder}/${a.draftName || a.name}`;
+      const pB = `${b.folder}/${b.draftName || b.name}`;
+      return sortAsc ? pA.localeCompare(pB, undefined, { numeric: true }) : pB.localeCompare(pA, undefined, { numeric: true });
+    });
+    tbody._visibleTracks = visibleTracks;
+    tbody.innerHTML = buildRowsHtml(visibleTracks);
+  }
 
   tbody._folderId = data.id;
   tbody._tracks = data.tracks;
   tbody._visibleTracks = visibleTracks;
+  tbody._sortByCategory = () => {
+    if (sortKey !== 'category') return false;
+    sortTracksByKey('category', false);
+    return true;
+  };
 
   tbody.addEventListener('click', e => {
     if (e.target.closest('a.dl')) return;
@@ -604,25 +685,9 @@ function renderGroup(data) {
   saveSortedBtn.addEventListener('click', () => runSave(saveSortedBtn, true));
   saveBtn.addEventListener('click', () => runSave(saveBtn, false));
 
-  const headers = div.querySelectorAll('th.sortable');
   headers.forEach(th => {
     th.addEventListener('click', () => {
-      const key = th.dataset.sort;
-      sortAsc = (sortKey === key) ? !sortAsc : (key === 'path' || key === 'category');
-      sortKey = key;
-      headers.forEach(h => { h.querySelector('.arrow').textContent = h.dataset.sort === sortKey ? (sortAsc ? '▲' : '▼') : ''; });
-      visibleTracks = Array.from(data.tracks).sort((a, b) => {
-        if (sortKey === 'category') {
-          const cA = getCategoryOrder(a), cB = getCategoryOrder(b);
-          if (cA !== cB) return sortAsc ? (cA - cB) : (cB - cA);
-        }
-        if (sortKey === 'duration') return sortAsc ? (a.duration - b.duration) : (b.duration - a.duration);
-        if (sortKey === 'size') return sortAsc ? ((a.size || 0) - (b.size || 0)) : ((b.size || 0) - (a.size || 0));
-        const pA = `${a.folder}/${a.draftName || a.name}`, pB = `${b.folder}/${b.draftName || b.name}`;
-        return sortAsc ? pA.localeCompare(pB, undefined, { numeric: true }) : pB.localeCompare(pA, undefined, { numeric: true });
-      });
-      tbody._visibleTracks = visibleTracks;
-      tbody.innerHTML = buildRowsHtml(visibleTracks);
+      sortTracksByKey(th.dataset.sort, true);
     });
   });
 
@@ -650,7 +715,9 @@ function renderGroup(data) {
   });
 }
 
-function downloadAllZip() { window.location.href = '/zip_all'; }
+function downloadAllZip() {
+  window.location.href = '/zip_all';
+}
 
 async function clearWorkspace() {
   await fetch('/clear', { method: 'POST' });
