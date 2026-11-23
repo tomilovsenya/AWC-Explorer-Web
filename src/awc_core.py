@@ -220,8 +220,7 @@ def _read_indexed_awc_name(base_id: str, work_dir: Path) -> str | None:
 
 
 def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: str) -> str | None:
-    saved_map: dict[str, str] = {}
-    saved_subgroups: dict[str, str] = {}
+    saved_tracks: dict[str, dict[str, str]] = {}
     display_name = _read_indexed_awc_name(base_id, work_dir)
     track_dirs = [work_dir / f"TRACK_{base_id}"]
     track_dirs.extend(sorted(work_dir.glob(f"TRACK_{base_id} - *")))
@@ -233,16 +232,26 @@ def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: s
                 if isinstance(raw, dict):
                     if display_name is None and isinstance(raw.get("display_name"), str):
                         display_name = raw["display_name"].strip() or None
-                    labels = raw.get("labels") if isinstance(raw.get("labels"), dict) else raw
-                    if not saved_map and labels:
-                        saved_map = {str(k): str(v) for k, v in labels.items() if v}
-                    subgroups = raw.get("subgroups")
-                    if not saved_subgroups and isinstance(subgroups, dict):
-                        saved_subgroups = {
-                            str(k): v
-                            for k, v in subgroups.items()
-                            if isinstance(v, str) and v in ("A", "B", "C", "D")
-                        }
+                    labels = raw.get("labels")
+                    if not isinstance(labels, dict):
+                        continue
+                    candidate_tracks = {}
+                    for name, record in labels.items():
+                        if not isinstance(record, dict):
+                            continue
+                        category = record.get("category")
+                        subgroup = record.get("subgroup")
+                        metadata = {}
+                        if isinstance(category, str) and category:
+                            metadata["category"] = category
+                        if isinstance(subgroup, str) and subgroup in ("A", "B", "C", "D"):
+                            metadata["subgroup"] = subgroup
+                        if metadata:
+                            candidate_tracks[str(name)] = metadata
+                    for name, record in candidate_tracks.items():
+                        saved_record = saved_tracks.setdefault(name, {})
+                        for key, value in record.items():
+                            saved_record.setdefault(key, value)
             except (OSError, ValueError):
                 pass
 
@@ -267,12 +276,15 @@ def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: s
             by_sig.setdefault((f.stat().st_size, dur), []).append((tag, subgroup))
 
     for t in tracks:
-        tag = saved_map.get(t["name"])
-        subgroup = saved_subgroups.get(t["name"])
-        if not tag:
+        saved = saved_tracks.get(t["name"], {})
+        tag = saved.get("category")
+        subgroup = saved.get("subgroup")
+        if not tag or not subgroup:
             candidates = by_sig.get((t.get("size", 0), t.get("duration", 0.0)))
             if candidates:
-                tag, fallback_subgroup = candidates.pop(0)
+                fallback_tag, fallback_subgroup = candidates.pop(0)
+                if not tag:
+                    tag = fallback_tag
                 if subgroup is None:
                     subgroup = fallback_subgroup
         if tag:

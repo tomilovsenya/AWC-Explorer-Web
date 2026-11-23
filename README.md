@@ -16,9 +16,9 @@ A fast, multi-core `.awc` (Audio Wave Container) extractor and browser-based aud
 * **Interactive Waveform Player:**
   * 60–144 FPS `<canvas>` amplitude waveform seekbar with click-and-drag scrubbing.
   * **Loop X-Fade:** Seamless equal-power 3% crossfade looping powered by the Web Audio API.
-  * **Single Playback & Auto-Next:** Automatically pauses overlapping tracks or plays sequentially through an entire soundbank.
-  * **Keyboard Shortcuts:** `Space` to Play/Pause, `↑` / `↓` arrows to step between tracks.
-* **Editable AWC Names & Track Labels:** Rename each imported AWC in its tracklist; category labels and optional A–D pattern groups persist in `labels.json`. Group letters appear in renamed tracks and sort within each category.
+  * **Single Playback & Auto-Next:** Prevents overlapping playback and, when enabled, advances to the next table track after category or subgroup assignment using the prior table order.
+  * **Keyboard Shortcuts:** `Space` to Play/Pause, `↑` / `↓` to step tracks, `0`–`9` to set categories, and `A`–`D` to assign pattern groups.
+* **Editable AWC Names & Track Labels:** Rename each imported AWC in its tracklist; `labels.json` stores each original track filename once with its category and optional A–D pattern group. Group letters appear in renamed tracks and sort within each category.
 * **Sortable Tracklists & Batch ZIPs:** Sort streams by **Output Path**, **Category**, **Duration**, or **File Size**, save labeled tracks to `TRACK_<ID> - <Name>/`, and download individual `<ID>.zip` archives or all extracted folders at once.
 
 ---

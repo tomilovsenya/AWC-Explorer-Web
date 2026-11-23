@@ -220,20 +220,33 @@ class AWCHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length) or b"{}")
             folder = Path(payload.get("folder", "")).name
             labels = payload.get("labels", {})
-            subgroups = payload.get("subgroups", {})
+            if not isinstance(labels, dict):
+                self.send_error(400, "Invalid track labels")
+                return
             src_dir = (WORK_DIR / folder).resolve()
             if WORK_DIR.resolve() not in src_dir.parents or not src_dir.is_dir():
                 self.send_error(404)
                 return
-            clean = {Path(k).name: str(v) for k, v in labels.items() if v}
-            if not isinstance(subgroups, dict):
-                self.send_error(400, "Invalid track groups")
-                return
-            clean_subgroups = {
-                Path(k).name: v
-                for k, v in subgroups.items()
-                if isinstance(k, str) and isinstance(v, str) and v in ("A", "B", "C", "D")
-            }
+            clean = {}
+            for key, value in labels.items():
+                if not isinstance(key, str) or not isinstance(value, dict):
+                    self.send_error(400, "Invalid track label record")
+                    return
+                metadata = {}
+                category = value.get("category")
+                subgroup = value.get("subgroup")
+                if category is not None:
+                    if not isinstance(category, str) or not category:
+                        self.send_error(400, "Invalid track category")
+                        return
+                    metadata["category"] = category
+                if subgroup is not None:
+                    if not isinstance(subgroup, str) or subgroup not in ("A", "B", "C", "D"):
+                        self.send_error(400, "Invalid track subgroup")
+                        return
+                    metadata["subgroup"] = subgroup
+                if metadata:
+                    clean[Path(key).name] = metadata
             display_name = payload.get("display_name", "")
             if not isinstance(display_name, str):
                 self.send_error(400, "Invalid AWC display name")
@@ -241,7 +254,6 @@ class AWCHandler(BaseHTTPRequestHandler):
             metadata = {
                 "display_name": display_name,
                 "labels": clean,
-                "subgroups": clean_subgroups,
             }
             (src_dir / "labels.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
             save_awc_name(get_base_id(folder), display_name)

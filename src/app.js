@@ -175,17 +175,18 @@ function recomputeGroupDraftNames(tracks) {
 
 function persistGroupLabels(folderId, tracks, displayName) {
   const labels = {};
-  const subgroups = {};
   tracks.forEach(t => {
-    if (t.tag) labels[t.name] = t.tag;
-    if (TRACK_GROUPS.includes(t.subgroup)) subgroups[t.name] = t.subgroup;
+    const metadata = {};
+    if (t.tag) metadata.category = t.tag;
+    if (TRACK_GROUPS.includes(t.subgroup)) metadata.subgroup = t.subgroup;
+    if (Object.keys(metadata).length) labels[t.name] = metadata;
   });
   const previousSave = metadataSaveQueues.get(folderId) || Promise.resolve();
   const save = previousSave.catch(() => {}).then(async () => {
     const response = await fetch('/save_labels', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folder: folderId, display_name: displayName, labels, subgroups })
+      body: JSON.stringify({ folder: folderId, display_name: displayName, labels })
     });
     if (!response.ok) throw new Error(`Metadata save failed (${response.status})`);
   });
@@ -227,6 +228,33 @@ function updateGroupRowsDOM(tbody, tracks) {
 
   if (activeTrack && byName.has(activeTrack.name)) {
     pbTitle.textContent = activeTrack.draftName || activeTrack.name;
+  }
+}
+
+function applyTrackSubgroup(folderId, tracks, track, subgroup, tbody, toggleSelection = false) {
+  if (!track?.tag || !TRACK_GROUPS.includes(subgroup)) return;
+  const previousSubgroup = track.subgroup;
+  const clearing = toggleSelection && previousSubgroup === subgroup;
+  const shouldAdvance = !clearing && previousSubgroup !== subgroup;
+  const previousVisible = tbody?._visibleTracks ? Array.from(tbody._visibleTracks) : Array.from(tracks);
+  const previousIndex = previousVisible.findIndex(item =>
+    item.folder === track.folder && item.name === track.name
+  );
+  const nextTrack = previousIndex >= 0 && previousVisible.length
+    ? previousVisible[(previousIndex + 1) % previousVisible.length]
+    : null;
+
+  track.subgroup = clearing ? null : subgroup;
+  recomputeGroupDraftNames(tracks);
+  tbody?._sortByCategory?.();
+  if (tbody) updateGroupRowsDOM(tbody, tracks);
+  persistGroupLabels(folderId, tracks, tbody?._groupDisplayName || folderId)
+    .catch(error => { statusEl.textContent = `Unable to save labels: ${error.message}`; });
+
+  if (shouldAdvance && autoPlayOnLabelEl?.checked && nextTrack) {
+    playTrack(nextTrack);
+    const row = tbody?.querySelector(`tr[data-source="${CSS.escape(nextTrack.name)}"]`);
+    row?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 }
 
@@ -613,14 +641,25 @@ window.addEventListener('keydown', e => {
     e.preventDefault();
     stepTrack(-1);
   } else if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-    const num = Number(e.key);
-    if (num >= 0 && num < ROLE_TAGS.length && activeTrack) {
-      e.preventDefault();
+    const subgroup = e.key.toUpperCase();
+    if (TRACK_GROUPS.includes(subgroup) && activeTrack) {
       const tbody = Array.from(document.querySelectorAll('.group tbody')).find(tb => tb._folderId === activeTrack.folder);
       const tracks = tbody?._tracks;
       const track = tracks?.find(t => t.name === activeTrack.name);
-      if (track) {
-        applyLabelAndAdvance(tbody._folderId, tracks, track, ROLE_TAGS[num], tbody);
+      if (track?.tag) {
+        e.preventDefault();
+        applyTrackSubgroup(tbody._folderId, tracks, track, subgroup, tbody, true);
+      }
+    } else {
+      const num = Number(e.key);
+      if (num >= 0 && num < ROLE_TAGS.length && activeTrack) {
+        e.preventDefault();
+        const tbody = Array.from(document.querySelectorAll('.group tbody')).find(tb => tb._folderId === activeTrack.folder);
+        const tracks = tbody?._tracks;
+        const track = tracks?.find(t => t.name === activeTrack.name);
+        if (track) {
+          applyLabelAndAdvance(tbody._folderId, tracks, track, ROLE_TAGS[num], tbody);
+        }
       }
     }
   }
@@ -685,14 +724,13 @@ function buildRowsHtml(tracks) {
     const subgroupPills = TRACK_GROUPS.map(letter => {
       const active = t.subgroup === letter ? ' active' : '';
       const disabled = t.tag ? '' : ' disabled';
-      const title = t.tag ? `Similarity group ${letter} (click again to clear)` : 'Choose a category first';
-      return `<button type="button" class="subgroup-pill${active}" data-source="${t.name}" data-subgroup="${letter}" aria-pressed="${t.subgroup === letter}" title="${title}"${disabled}>${letter}</button>`;
+      const title = t.tag ? `Similarity group ${letter} (shortcut: ${letter}; press or click again to clear)` : 'Choose a category first';
+      return `<button type="button" class="subgroup-pill${active}" data-source="${t.name}" data-subgroup="${letter}" aria-pressed="${t.subgroup === letter}" aria-keyshortcuts="${letter}" title="${title}"${disabled}>${letter}</button>`;
     }).join('');
     return `<tr data-folder="${t.folder}" data-source="${t.name}" class="${isPlaying ? 'playing-row' : ''}">
       <td><code class="track-label">${displayName}</code></td>
       <td><span class="tag-pills">${pills}</span></td>
       <td><span class="subgroup-pills">${subgroupPills}</span></td>
-      <td>${t.channels === 2 ? 'Stereo' : 'Mono'}</td>
       <td>${t.duration}s</td>
       <td>${formatBytes(t.size)}</td>
       <td><a class="dl" href="${url}" download="${displayName}">Download</a></td>
@@ -748,7 +786,6 @@ function renderGroup(data) {
           <th class="sortable" data-sort="path">Output Path<span class="arrow">▲</span></th>
           <th class="sortable" data-sort="category">Category<span class="arrow"></span></th>
           <th>Group</th>
-          <th>Channels</th>
           <th class="sortable" data-sort="duration">Duration<span class="arrow"></span></th>
           <th class="sortable" data-sort="size">Size<span class="arrow"></span></th>
           <th>File</th>
@@ -834,14 +871,7 @@ function renderGroup(data) {
     const subgroupPill = e.target.closest('.subgroup-pill');
     if (subgroupPill) {
       const track = data.tracks.find(t => t.name === subgroupPill.dataset.source);
-      if (track?.tag) {
-        track.subgroup = track.subgroup === subgroupPill.dataset.subgroup ? null : subgroupPill.dataset.subgroup;
-        recomputeGroupDraftNames(data.tracks);
-        if (sortKey === 'category') sortTracksByKey('category', false);
-        updateGroupRowsDOM(tbody, data.tracks);
-        persistGroupLabels(data.id, data.tracks, tbody._groupDisplayName)
-          .catch(error => { statusEl.textContent = `Unable to save labels: ${error.message}`; });
-      }
+      if (track) applyTrackSubgroup(data.id, data.tracks, track, subgroupPill.dataset.subgroup, tbody, true);
       return;
     }
     const row = e.target.closest('tr');
