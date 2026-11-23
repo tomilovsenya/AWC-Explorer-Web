@@ -2,6 +2,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
 from pathlib import Path
+import re
 import urllib.parse
 import webbrowser
 import zipfile
@@ -12,6 +13,11 @@ PORT = 8765
 BASE_DIR = Path(__file__).resolve().parent
 WORK_DIR = BASE_DIR / "output"
 WORK_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def safe_folder_label(value):
+    label = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value)).strip(" .")
+    return label[:120]
 
 
 class AWCHandler(BaseHTTPRequestHandler):
@@ -144,7 +150,15 @@ class AWCHandler(BaseHTTPRequestHandler):
                 self.send_error(404)
                 return
             clean = {Path(k).name: str(v) for k, v in labels.items() if v}
-            (src_dir / "labels.json").write_text(json.dumps(clean, indent=2), encoding="utf-8")
+            display_name = payload.get("display_name", "")
+            if not isinstance(display_name, str):
+                self.send_error(400, "Invalid AWC display name")
+                return
+            metadata = {
+                "display_name": display_name,
+                "labels": clean,
+            }
+            (src_dir / "labels.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", "2")
@@ -157,7 +171,12 @@ class AWCHandler(BaseHTTPRequestHandler):
             folder = Path(payload.get("folder", "")).name
             items = payload.get("items", [])
             src_dir = (WORK_DIR / folder).resolve()
-            dst_dir = (WORK_DIR / f"TRACK_{folder}").resolve()
+            track_folder = f"TRACK_{folder}"
+            if payload.get("include_name"):
+                name = safe_folder_label(payload.get("display_name", ""))
+                if name:
+                    track_folder = f"{track_folder} - {name}"
+            dst_dir = (WORK_DIR / track_folder).resolve()
             if WORK_DIR.resolve() not in src_dir.parents or not src_dir.is_dir():
                 self.send_error(404)
                 return
@@ -177,7 +196,7 @@ class AWCHandler(BaseHTTPRequestHandler):
             if labels_file.is_file():
                 (dst_dir / "labels.json").write_bytes(labels_file.read_bytes())
 
-            body = json.dumps({"folder": f"TRACK_{folder}", "saved": saved}).encode("utf-8")
+            body = json.dumps({"folder": track_folder, "saved": saved}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))

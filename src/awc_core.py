@@ -200,23 +200,30 @@ def _probe_ogg_opus(path: Path) -> tuple[int, float]:
     return channels, dur
 
 
-def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: str) -> None:
+def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: str) -> str | None:
     saved_map: dict[str, str] = {}
-    for candidate_dir in (work_dir / base_id, work_dir / f"TRACK_{base_id}"):
+    display_name = None
+    track_dirs = [work_dir / f"TRACK_{base_id}"]
+    track_dirs.extend(sorted(work_dir.glob(f"TRACK_{base_id} - *")))
+    for candidate_dir in (work_dir / base_id, *track_dirs):
         labels_file = candidate_dir / "labels.json"
         if labels_file.is_file():
             try:
                 raw = json.loads(labels_file.read_text(encoding="utf-8"))
-                if isinstance(raw, dict) and raw:
-                    saved_map = {str(k): str(v) for k, v in raw.items() if v}
-                    break
+                if isinstance(raw, dict):
+                    if display_name is None and isinstance(raw.get("display_name"), str):
+                        display_name = raw["display_name"].strip() or None
+                    labels = raw.get("labels") if isinstance(raw.get("labels"), dict) else raw
+                    if not saved_map and labels:
+                        saved_map = {str(k): str(v) for k, v in labels.items() if v}
             except (OSError, ValueError):
                 pass
 
-    # Fallback: match already-exported files in ./output/TRACK_<ID>/ by (size, duration)
-    track_dir = work_dir / f"TRACK_{base_id}"
+    # Fallback: match already-exported files by (size, duration).
     by_sig: dict[tuple[int, float], list[str]] = {}
-    if track_dir.is_dir():
+    for track_dir in track_dirs:
+        if not track_dir.is_dir():
+            continue
         pat = re.compile(rf"^{re.escape(base_id)}_([A-Z0-9]+)_\d+\.{re.escape(ext)}$", re.I)
         for f in sorted(track_dir.glob(f"{base_id}_*_*.{ext}")):
             m = pat.match(f.name)
@@ -239,6 +246,7 @@ def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: s
                 tag = candidates.pop(0)
         if tag:
             t["tag"] = tag
+    return display_name
 
 
 def process_awc_bytes(filename: str, data: bytes, work_dir: Path, ext: str) -> dict:
@@ -271,8 +279,14 @@ def process_awc_bytes(filename: str, data: bytes, work_dir: Path, ext: str) -> d
             results[futures[fut]] = res
 
     tracks = [results[idx] for idx in sorted(results)]
-    _apply_saved_labels(base_id, work_dir, tracks, ext)
-    return {"file": filename, "id": base_id, "flags": f"0x{flags:08X}", "tracks": tracks}
+    display_name = _apply_saved_labels(base_id, work_dir, tracks, ext)
+    return {
+        "file": filename,
+        "display_name": display_name or Path(filename).name,
+        "id": base_id,
+        "flags": f"0x{flags:08X}",
+        "tracks": tracks,
+    }
 
 
 def get_cached_awc(filename: str, work_dir: Path, ext: str) -> dict | None:
@@ -301,5 +315,11 @@ def get_cached_awc(filename: str, work_dir: Path, ext: str) -> dict | None:
             "size": f.stat().st_size,
         })
 
-    _apply_saved_labels(base_id, work_dir, tracks, ext)
-    return {"file": filename, "id": base_id, "cached": True, "tracks": tracks}
+    display_name = _apply_saved_labels(base_id, work_dir, tracks, ext)
+    return {
+        "file": filename,
+        "display_name": display_name or Path(filename).name,
+        "id": base_id,
+        "cached": True,
+        "tracks": tracks,
+    }

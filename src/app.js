@@ -34,6 +34,7 @@ let xfadeState = null;
 
 const waveCache = new Map();
 const bufferCache = new Map();
+const metadataSaveQueues = new Map();
 
 function fmtTime(sec) {
   if (!isFinite(sec) || sec < 0) return '0:00';
@@ -46,6 +47,16 @@ function formatBytes(bytes) {
   if (!bytes || bytes < 1024) return `${bytes || 0} B`;
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1048576).toFixed(2)} MB`;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[char]);
 }
 
 function getTrackUrl(track) {
@@ -75,16 +86,22 @@ function recomputeGroupDraftNames(tracks) {
   });
 }
 
-function persistGroupLabels(folderId, tracks) {
+function persistGroupLabels(folderId, tracks, displayName) {
   const labels = {};
   tracks.forEach(t => {
     if (t.tag) labels[t.name] = t.tag;
   });
-  fetch('/save_labels', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ folder: folderId, labels })
-  }).catch(() => {});
+  const previousSave = metadataSaveQueues.get(folderId) || Promise.resolve();
+  const save = previousSave.catch(() => {}).then(async () => {
+    const response = await fetch('/save_labels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder: folderId, display_name: displayName, labels })
+    });
+    if (!response.ok) throw new Error(`Metadata save failed (${response.status})`);
+  });
+  metadataSaveQueues.set(folderId, save);
+  return save;
 }
 
 function syncRowHighlight() {
@@ -133,7 +150,8 @@ function applyLabelAndAdvance(folderId, tracks, track, tag, tbody) {
 
   track.tag = tag;
   recomputeGroupDraftNames(tracks);
-  persistGroupLabels(folderId, tracks);
+  persistGroupLabels(folderId, tracks, tbody?._groupDisplayName || folderId)
+    .catch(error => { statusEl.textContent = `Unable to save labels: ${error.message}`; });
 
   const didResort = Boolean(tbody && autoResortOnLabelEl?.checked && tbody._sortByCategory?.());
   if (tbody && !didResort) {
@@ -561,12 +579,13 @@ function renderGroup(data) {
   const div = document.createElement('div');
   div.className = 'group';
   if (data.error) {
-    div.innerHTML = `<div class="group-header"><strong>${data.file}</strong><span class="badge" style="color:#f87171;">${data.error}</span></div>`;
+    div.innerHTML = `<div class="group-header"><strong>${escapeHtml(data.file)}</strong><span class="badge" style="color:#f87171;">${escapeHtml(data.error)}</span></div>`;
     resultsEl.prepend(div);
     hidePlayerBarIfNoTables();
     return;
   }
 
+  data.display_name = data.display_name || data.file;
   recomputeGroupDraftNames(data.tracks);
 
   let sortKey = 'path';
@@ -578,7 +597,7 @@ function renderGroup(data) {
   div.innerHTML = `
     <div class="group-header">
       <div>
-        <strong>${data.file}</strong>
+        <input type="text" class="awc-display-name" aria-label="AWC display name" title="Edit the name used for this AWC" value="${escapeHtml(data.display_name)}">
         <span class="badge">Folder: output/${data.id}/</span>
         <span class="badge">${formatBytes(totalBytes)}</span>
         <span class="badge">${data.tracks.length} streams</span>
@@ -586,7 +605,7 @@ function renderGroup(data) {
       </div>
       <div style="display:flex; gap:8px; align-items:center;">
         <button type="button" class="secondary close-table-btn">Close</button>
-        <button type="button" class="secondary save-sorted-btn">Save Sorted (TRACK_${data.id})</button>
+        <button type="button" class="secondary save-sorted-btn" title="Saves labeled tracks to a folder named with this AWC name">Save Sorted (TRACK_${data.id})</button>
         <button type="button" class="secondary save-track-btn">Save All (TRACK_${data.id})</button>
         <a class="dl" href="/zip/${encodeURIComponent(data.id)}">Download ${data.id}.zip</a>
       </div>
@@ -606,6 +625,7 @@ function renderGroup(data) {
     </table>`;
 
   const tbody = div.querySelector('tbody');
+  const displayNameInput = div.querySelector('.awc-display-name');
   const saveSortedBtn = div.querySelector('.save-sorted-btn');
   const saveBtn = div.querySelector('.save-track-btn');
   const headers = div.querySelectorAll('th.sortable');
@@ -633,6 +653,7 @@ function renderGroup(data) {
   }
 
   tbody._folderId = data.id;
+  tbody._groupDisplayName = data.display_name;
   tbody._tracks = data.tracks;
   tbody._visibleTracks = visibleTracks;
   tbody._sortByCategory = () => {
@@ -656,6 +677,15 @@ function renderGroup(data) {
     }
   });
 
+  displayNameInput.addEventListener('change', () => {
+    data.display_name = displayNameInput.value.trim() || data.file;
+    displayNameInput.value = data.display_name;
+    tbody._groupDisplayName = data.display_name;
+    persistGroupLabels(data.id, data.tracks, data.display_name)
+      .then(() => { statusEl.textContent = `Saved AWC name for ${data.file}.`; })
+      .catch(error => { statusEl.textContent = `Unable to save AWC name: ${error.message}`; });
+  });
+
   async function runSave(btn, onlyTagged) {
     recomputeGroupDraftNames(data.tracks);
     updateGroupRowsDOM(tbody, data.tracks);
@@ -665,8 +695,12 @@ function renderGroup(data) {
       return;
     }
     btn.disabled = true;
-    statusEl.textContent = `Saving ${sourceTracks.length} bit(s) to TRACK_${data.id}...`;
+    const targetLabel = onlyTagged
+      ? `TRACK_${data.id} - ${data.display_name}`
+      : `TRACK_${data.id}`;
+    statusEl.textContent = `Saving ${sourceTracks.length} bit(s) to ${targetLabel}...`;
     try {
+      await metadataSaveQueues.get(data.id);
       const items = sourceTracks.map(t => ({
         source_name: t.name,
         target_name: t.draftName || t.name
@@ -674,10 +708,18 @@ function renderGroup(data) {
       const res = await fetch('/save_track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder: data.id, items })
+        body: JSON.stringify({
+          folder: data.id,
+          items,
+          include_name: onlyTagged,
+          display_name: data.display_name
+        })
       });
+      if (!res.ok) throw new Error(`Save failed (${res.status})`);
       const out = await res.json();
       statusEl.textContent = `Saved ${(out.saved || []).length} files to output/${out.folder}/`;
+    } catch (error) {
+      statusEl.textContent = `Unable to save tracks: ${error.message}`;
     } finally {
       btn.disabled = false;
     }

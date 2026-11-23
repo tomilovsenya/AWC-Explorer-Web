@@ -16,7 +16,8 @@ A fast, multi-core `.awc` (Audio Wave Container) extractor and browser-based aud
   * **Loop X-Fade:** Seamless equal-power 3% crossfade looping powered by the Web Audio API.
   * **Single Playback & Auto-Next:** Automatically pauses overlapping tracks or plays sequentially through an entire soundbank.
   * **Keyboard Shortcuts:** `Space` to Play/Pause, `↑` / `↓` arrows to step between tracks.
-* **Sortable Tracklists & Batch ZIPs:** Sort streams by **Output Path**, **Duration**, or **File Size**, and download individual `<ID>.zip` archives or all extracted folders at once.
+* **Editable AWC Names & Track Labels:** Rename each imported AWC in its tracklist; the name and category labels persist in `labels.json` and are restored on re-import.
+* **Sortable Tracklists & Batch ZIPs:** Sort streams by **Output Path**, **Duration**, or **File Size**, save labeled tracks to `TRACK_<ID> - <Name>/`, and download individual `<ID>.zip` archives or all extracted folders at once.
 
 ---
 
