@@ -6,7 +6,7 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
   :root { --bg: #0f1117; --card: #181b24; --accent: #ff4fa3; --accent2: #5865f2; --text: #eef0f6; --muted: #8b92a8; }
-  * { box-sizing: border-box; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  * { box-sizing: border-box; font-family: 'GTAArtDeco', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
   body { background: var(--bg); color: var(--text); margin: 0; padding: 24px 24px 96px 24px; }
   .container { width: 90%; max-width: 1800px; margin: 0 auto; }
   header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; position: sticky; top: 0; z-index: 20; background: var(--bg, #0f1219);}
@@ -14,8 +14,8 @@
   .brand-logo { display: block; width: 160px; height: 40px; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
   .controls { display: flex; gap: 12px; align-items: center; }
   select, button { background: var(--card); color: var(--text); border: 1px solid #2d3244; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; }
-  button.secondary { background: var(--accent2); border-color: var(--accent2); color: #fff; font-weight: 600; }
-  button.danger { background: #ef4444; border-color: #ef4444; color: #fff; font-weight: 600; }
+  button.secondary { background: var(--accent2); border-color: var(--accent2); color: #fff; font-weight: 500; }
+  button.danger { background: #ef4444; border-color: #ef4444; color: #fff; font-weight: 500; }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   .toggle { display: inline-flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid #2d3244; padding: 7px 12px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; user-select: none; }
   .toggle input { accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; margin: 0; }
@@ -42,7 +42,7 @@
   .group-progress, .group-progress-labels { user-select: none; -webkit-user-select: none; }
   .group-progress.category-sort-active .progress-segment { cursor: pointer; }
   .group-progress.category-sort-active .progress-segment:hover { filter: brightness(1.15); }
-  .awc-display-name { background: transparent; color: var(--text); border: 1px solid transparent; border-radius: 6px; padding: 3px 6px; font-size: 1rem; font-weight: 600; width: min(32vw, 420px); }
+  .awc-display-name { background: transparent; color: var(--text); border: 1px solid transparent; border-radius: 6px; padding: 3px 6px; font-size: 1rem; font-weight: 500; width: min(32vw, 420px); }
   .awc-display-name:hover, .awc-display-name:focus { border-color: #2d3244; outline: none; }
   .badge { background: #262b3d; padding: 3px 8px; border-radius: 6px; font-size: 0.8rem; color: var(--muted); }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
@@ -54,7 +54,7 @@
   th.sortable .arrow { font-size: 0.75rem; margin-left: 4px; color: var(--accent); }
   #groupNav { position: fixed; top: 80px; left: 8px; z-index: 30; display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: fit-content; max-width: calc(100vw - 24px); max-height: calc(100vh - 168px); overflow-x: hidden; overflow-y: auto; padding: 5px; color: var(--muted); background: rgba(15, 17, 23, 0.96); border: 1px solid #2d3244; border-radius: 8px; }
   #groupNav[hidden] { display: none; }
-  #groupNav span { padding: 2px; font-size: 0.68rem; font-weight: 600; }
+  #groupNav span { padding: 2px; font-size: 0.68rem; font-weight: 500; }
   #groupNav a { display: block; min-width: 0; overflow: hidden; color: var(--text); background: var(--card); border: 1px solid #2d3244; border-radius: 6px; padding: 4px 5px; font-size: 0.7rem; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
   #groupNav a:hover, #groupNav a:focus { border-color: var(--accent); color: var(--accent); }
   body.has-group-nav .container { width: calc(100% - var(--group-nav-width) - 16px); margin-left: calc(var(--group-nav-width) - 4px); margin-right: 20px; }
@@ -65,11 +65,11 @@
   tr.playing-row { background: rgba(255, 79, 163, 0.12); }
   td.preview-col { width: 100%; }
   audio { height: 34px; width: 100%; min-width: 380px; display: block; }
-  a.dl { color: var(--accent); text-decoration: none; font-weight: 600; }
+  a.dl { color: var(--accent); text-decoration: none; font-weight: 500; }
   #playerBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 9000; background: #141720; border-top: 1px solid #2d3244; padding: 12px 28px; display: flex; align-items: center; gap: 16px; box-shadow: 0 -8px 30px rgba(0,0,0,0.5); }
   #playerBar.hidden { display: none; }
   .pb-info { min-width: 210px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pb-title { font-weight: 600; font-size: 0.9rem; color: #fff; }
+  .pb-title { font-weight: 500; font-size: 0.9rem; color: #fff; }
   .pb-sub { font-size: 0.78rem; color: var(--muted); }
   .pb-btns { display: flex; gap: 6px; align-items: center; }
   .pb-btns button { padding: 6px 11px; font-size: 0.95rem; }
