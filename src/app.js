@@ -51,6 +51,20 @@ function formatBytes(bytes) {
   return `${(bytes / 1048576).toFixed(2)} MB`;
 }
 
+function buildCategoryStatsHtml(tracks) {
+  const counts = new Map(ROLE_TAGS.map(tag => [tag, 0]));
+  tracks.forEach(track => {
+    if (counts.has(track.tag)) counts.set(track.tag, counts.get(track.tag) + 1);
+  });
+  const categorizedCount = Array.from(counts.values()).reduce((sum, count) => sum + count, 0);
+  const stats = ROLE_TAGS
+    .filter(tag => counts.get(tag) > 0)
+    .map(tag => `<span class="badge category-stat tag-color-${tag.toLowerCase()}">${tag}: ${counts.get(tag)}</span>`);
+  const unlabeledCount = tracks.length - categorizedCount;
+  if (unlabeledCount > 0) stats.push(`<span class="badge category-stat">Unlabeled: ${unlabeledCount}</span>`);
+  return stats.join('');
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, char => ({
     '&': '&amp;',
@@ -182,6 +196,9 @@ function applyLabelAndAdvance(folderId, tracks, track, tag, tbody) {
 
   track.tag = tag;
   recomputeGroupDraftNames(tracks);
+  const group = tbody?.closest('.group');
+  const categoryStatsEl = group?.querySelector('.category-stats');
+  if (categoryStatsEl) categoryStatsEl.innerHTML = buildCategoryStatsHtml(tracks);
   persistGroupLabels(folderId, tracks, tbody?._groupDisplayName || folderId)
     .catch(error => { statusEl.textContent = `Unable to save labels: ${error.message}`; });
 
@@ -600,7 +617,7 @@ function buildRowsHtml(tracks) {
     const isPlaying = activeTrack && activeTrack.folder === t.folder && activeTrack.name === t.name;
     const pills = ROLE_TAGS.map((tag, i) => {
       const active = t.tag === tag ? ' active' : '';
-      return `<button type="button" class="tag-pill${active}" data-source="${t.name}" data-tag="${tag}" title="Shortcut: ${i}">${i}:${tag}</button>`;
+      return `<button type="button" class="tag-pill tag-color-${tag.toLowerCase()}${active}" data-source="${t.name}" data-tag="${tag}" title="Shortcut: ${i}">${i}:${tag}</button>`;
     }).join('');
     return `<tr data-folder="${t.folder}" data-source="${t.name}" class="${isPlaying ? 'playing-row' : ''}">
       <td><code class="track-label">${displayName}</code></td>
@@ -641,6 +658,7 @@ function renderGroup(data) {
         <div class="group-meta">
           <span class="badge">Folder: output/${data.id}/</span>
           ${originalNameBadge}
+          <div class="category-stats">${buildCategoryStatsHtml(data.tracks)}</div>
           <span class="badge">${formatBytes(totalBytes)}</span>
           <span class="badge">${data.tracks.length} streams</span>
           ${cacheBadge}
