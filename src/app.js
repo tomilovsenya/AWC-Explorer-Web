@@ -2,7 +2,6 @@ const fileInput = document.getElementById('fileInput');
 const statusEl = document.getElementById('status');
 const resultsEl = document.getElementById('results');
 const zipAllBtn = document.getElementById('zipAllBtn');
-const singlePlayEl = document.getElementById('singlePlay');
 const autoPlayOnLabelEl = document.getElementById('autoPlayOnLabel');
 const overlayEl = document.getElementById('globalDropOverlay');
 
@@ -19,7 +18,11 @@ const loopFadeEl = document.getElementById('loopFade');
 
 const ROLE_TAGS = ['INTRO', 'OUTRO', 'PAD', 'PERC', 'LEAD', 'BASS', 'DRUMS', 'SYNTH', 'OTHER', 'CALM'];
 
-let activeAudio = null;
+const player = new Audio();
+player.preload = 'metadata';
+
+let activeTrack = null; // { folder, name, draftName, channels, duration, size, tag }
+let activeUrl = null;
 let isSeeking = false;
 let rafId = null;
 let dragDepth = 0;
@@ -41,6 +44,10 @@ function formatBytes(bytes) {
   if (!bytes || bytes < 1024) return `${bytes || 0} B`;
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1048576).toFixed(2)} MB`;
+}
+
+function getTrackUrl(track) {
+  return `/file/${encodeURIComponent(track.folder)}/${encodeURIComponent(track.name)}`;
 }
 
 function recomputeGroupDraftNames(tracks) {
@@ -73,25 +80,46 @@ function persistGroupLabels(folderId, tracks) {
   }).catch(() => {});
 }
 
-function applyLabelAndAdvance(folderId, tracks, track, tag, rerenderFn) {
+function syncRowHighlight() {
+  document.querySelectorAll('tbody tr').forEach(tr => {
+    const isMatch = activeTrack && tr.dataset.folder === activeTrack.folder && tr.dataset.source === activeTrack.name;
+    tr.classList.toggle('playing-row', Boolean(isMatch));
+  });
+}
+
+function updateGroupRowsDOM(tbody, tracks) {
+  const byName = new Map(tracks.map(t => [t.name, t]));
+  tbody.querySelectorAll('tr').forEach(tr => {
+    const t = byName.get(tr.dataset.source);
+    if (!t) return;
+    const displayName = t.draftName || t.name;
+    const labelEl = tr.querySelector('.track-label');
+    if (labelEl && labelEl.textContent !== displayName) {
+      labelEl.textContent = displayName;
+    }
+    const dlEl = tr.querySelector('a.dl');
+    if (dlEl) {
+      dlEl.setAttribute('download', displayName);
+    }
+    tr.querySelectorAll('.tag-pill').forEach(pill => {
+      pill.classList.toggle('active', pill.dataset.tag === t.tag);
+    });
+  });
+
+  if (activeTrack && byName.has(activeTrack.name)) {
+    pbTitle.textContent = activeTrack.draftName || activeTrack.name;
+  }
+}
+
+function applyLabelAndAdvance(folderId, tracks, track, tag, tbody) {
   track.tag = tag;
   recomputeGroupDraftNames(tracks);
   persistGroupLabels(folderId, tracks);
+  if (tbody) updateGroupRowsDOM(tbody, tracks);
+
   if (autoPlayOnLabelEl?.checked) {
-    const list = Array.from(document.querySelectorAll('audio'));
-    if (list.length > 0) {
-      const idx = activeAudio ? list.indexOf(activeAudio) : -1;
-      const next = list.at((idx + 1 + list.length) % list.length);
-      if (activeAudio) {
-        activeAudio.pause();
-        activeAudio.currentTime = 0;
-      }
-      next.currentTime = 0;
-      next.play().catch(() => {});
-      activeAudio = next;
-    }
+    stepTrack(1);
   }
-  rerenderFn?.(activeAudio);
 }
 
 function stopXfadeLoop() {
@@ -113,7 +141,7 @@ function startXfadeLoop(url, offsetSec = 0) {
   const audioBuf = bufferCache.get(url);
   if (!audioBuf || !audioCtx) return false;
   if (audioCtx.state === 'suspended') audioCtx.resume();
-  if (activeAudio && !activeAudio.paused) activeAudio.pause();
+  if (!player.paused) player.pause();
 
   const dur = audioBuf.duration;
   const fadeDur = Math.min(dur * 0.4, Math.max(0.04, Math.min(2.5, dur * 0.03)));
@@ -164,15 +192,14 @@ function startXfadeLoop(url, offsetSec = 0) {
 }
 
 loopFadeEl.addEventListener('change', () => {
-  if (!activeAudio) return;
-  const url = activeAudio.getAttribute('src');
-  if (loopFadeEl.checked && bufferCache.has(url)) {
-    startXfadeLoop(url, activeAudio.currentTime || 0);
+  if (!activeUrl) return;
+  if (loopFadeEl.checked && bufferCache.has(activeUrl)) {
+    startXfadeLoop(activeUrl, player.currentTime || 0);
   } else if (!loopFadeEl.checked && xfadeState) {
     const cur = getXfadeCurrentTime();
     stopXfadeLoop();
-    activeAudio.currentTime = cur;
-    activeAudio.play();
+    player.currentTime = cur;
+    player.play().catch(() => {});
   }
 });
 
@@ -181,9 +208,9 @@ async function loadWaveform(url) {
   drawWaveform(0);
   if (waveCache.has(url)) {
     currentPeaks = waveCache.get(url);
-    drawWaveform(activeAudio && activeAudio.duration ? activeAudio.currentTime / activeAudio.duration : 0);
-    if (loopFadeEl.checked && bufferCache.has(url) && activeAudio?.getAttribute('src') === url) {
-      startXfadeLoop(url, activeAudio.currentTime || 0);
+    drawWaveform(player.duration ? player.currentTime / player.duration : 0);
+    if (loopFadeEl.checked && bufferCache.has(url) && activeUrl === url) {
+      startXfadeLoop(url, player.currentTime || 0);
     }
     return;
   }
@@ -211,10 +238,10 @@ async function loadWaveform(url) {
     const normPeaks = peaks.map(p => p / maxPeak);
     waveCache.set(url, normPeaks);
 
-    if (activeAudio?.getAttribute('src') === url) {
+    if (activeUrl === url) {
       currentPeaks = normPeaks;
-      drawWaveform(activeAudio.duration ? activeAudio.currentTime / activeAudio.duration : 0);
-      if (loopFadeEl.checked) startXfadeLoop(url, activeAudio.currentTime || 0);
+      drawWaveform(player.duration ? player.currentTime / player.duration : 0);
+      if (loopFadeEl.checked) startXfadeLoop(url, player.currentTime || 0);
     }
   } catch (_) { currentPeaks = null; }
 }
@@ -257,31 +284,43 @@ function updateSeekLoop() {
     rafId = requestAnimationFrame(updateSeekLoop);
     return;
   }
-  if (activeAudio) {
-    const dur = activeAudio.duration || 0;
-    const cur = activeAudio.currentTime || 0;
+  if (activeUrl) {
+    const dur = player.duration || 0;
+    const cur = player.currentTime || 0;
     drawWaveform(dur > 0 ? cur / dur : 0);
     pbTime.textContent = `${fmtTime(cur)} / ${fmtTime(dur)}`;
   }
-  if (activeAudio && !activeAudio.paused) rafId = requestAnimationFrame(updateSeekLoop);
+  if (!player.paused) rafId = requestAnimationFrame(updateSeekLoop);
 }
 
-function bindAudioToBar(aud) {
+function playTrack(track) {
+  if (!track) return;
   stopXfadeLoop();
-  if (activeAudio && activeAudio !== aud) activeAudio.closest('tr')?.classList.remove('playing-row');
-  activeAudio = aud;
+
+  const url = getTrackUrl(track);
+  activeTrack = track;
+  activeUrl = url;
+
   playerBar.classList.remove('hidden');
-  const row = aud.closest('tr');
-  row?.classList.add('playing-row');
-  pbTitle.textContent = row?.querySelector('.track-label')?.textContent || 'Audio Track';
-  const chCell = row?.firstElementChild?.nextElementSibling;
-  pbSub.textContent = chCell ? chCell.textContent : '';
-  pbPlayBtn.textContent = aud.paused ? '▶' : '⏸';
-  loadWaveform(aud.getAttribute('src'));
+  syncRowHighlight();
+
+  pbTitle.textContent = track.draftName || track.name;
+  pbSub.textContent = track.channels === 2 ? 'Stereo' : 'Mono';
+
+  player.src = url;
+  player.currentTime = 0;
+
+  if (loopFadeEl.checked && bufferCache.has(url)) {
+    loadWaveform(url);
+    startXfadeLoop(url, 0);
+  } else {
+    player.play().catch(() => {});
+    loadWaveform(url);
+  }
 }
 
 function seekFromPointer(e) {
-  if (!activeAudio) return;
+  if (!activeUrl) return;
   const rect = pbWaveWrap.getBoundingClientRect();
   const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
   if (xfadeState) {
@@ -291,10 +330,10 @@ function seekFromPointer(e) {
     pbTime.textContent = `${fmtTime(target)} / ${fmtTime(xfadeState.dur)}`;
     return;
   }
-  if (!activeAudio.duration) return;
-  activeAudio.currentTime = ratio * activeAudio.duration;
+  if (!player.duration) return;
+  player.currentTime = ratio * player.duration;
   drawWaveform(ratio);
-  pbTime.textContent = `${fmtTime(activeAudio.currentTime)} / ${fmtTime(activeAudio.duration)}`;
+  pbTime.textContent = `${fmtTime(player.currentTime)} / ${fmtTime(player.duration)}`;
 }
 
 pbWaveWrap.addEventListener('pointerdown', e => { isSeeking = true; pbWaveWrap.setPointerCapture(e.pointerId); seekFromPointer(e); });
@@ -303,7 +342,7 @@ pbWaveWrap.addEventListener('pointerup', e => {
   if (!isSeeking) return;
   isSeeking = false;
   pbWaveWrap.releasePointerCapture(e.pointerId);
-  if (xfadeState?.active || (activeAudio && !activeAudio.paused)) {
+  if (xfadeState?.active || !player.paused) {
     cancelAnimationFrame(rafId);
     rafId = requestAnimationFrame(updateSeekLoop);
   }
@@ -311,72 +350,70 @@ pbWaveWrap.addEventListener('pointerup', e => {
 
 window.addEventListener('resize', () => {
   if (xfadeState?.active) drawWaveform(getXfadeCurrentTime() / xfadeState.dur);
-  else if (activeAudio?.duration) drawWaveform(activeAudio.currentTime / activeAudio.duration);
+  else if (player.duration) drawWaveform(player.currentTime / player.duration);
 });
 
-document.addEventListener('play', e => {
-  if (e.target.tagName !== 'AUDIO') return;
-  if (singlePlayEl.checked) {
-    document.querySelectorAll('audio').forEach(aud => { if (aud !== e.target && !aud.paused) aud.pause(); });
-  }
-  bindAudioToBar(e.target);
+player.addEventListener('play', () => {
+  pbPlayBtn.textContent = '⏸';
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(updateSeekLoop);
-}, true);
+});
 
-document.addEventListener('pause', e => {
-  if (e.target === activeAudio && !xfadeState) { pbPlayBtn.textContent = '▶'; cancelAnimationFrame(rafId); }
-}, true);
+player.addEventListener('pause', () => {
+  if (!xfadeState) {
+    pbPlayBtn.textContent = '▶';
+    cancelAnimationFrame(rafId);
+  }
+});
 
-document.addEventListener('ended', e => {
-  if (e.target !== activeAudio || xfadeState) return;
+player.addEventListener('ended', () => {
+  if (xfadeState) return;
   pbPlayBtn.textContent = '▶';
   cancelAnimationFrame(rafId);
   if (autoNextEl.checked) stepTrack(1);
-}, true);
+});
+
+function getAllVisibleTracks() {
+  const items = [];
+  document.querySelectorAll('.group tbody').forEach(tbody => {
+    const visible = tbody._visibleTracks || [];
+    visible.forEach(track => items.push({ track, tbody }));
+  });
+  return items;
+}
 
 function toggleActivePlay() {
-  if (loopFadeEl.checked && activeAudio) {
-    const url = activeAudio.getAttribute('src');
+  if (loopFadeEl.checked && activeUrl) {
     if (xfadeState?.active) {
       const cur = getXfadeCurrentTime();
       stopXfadeLoop();
-      activeAudio.currentTime = cur;
+      player.currentTime = cur;
       pbPlayBtn.textContent = '▶';
       return;
-    } else if (bufferCache.has(url)) {
-      startXfadeLoop(url, activeAudio.currentTime || 0);
+    } else if (bufferCache.has(activeUrl)) {
+      startXfadeLoop(activeUrl, player.currentTime || 0);
       return;
     }
   }
-  if (!activeAudio) {
-    const audios = document.querySelectorAll('audio');
-    for (const audio of audios) {
-      if (audio.src && !audio.paused) {
-        audio.play();
-        return;
-      }
-    }
-    // Find first audio with valid src
-    for (const audio of audios) {
-      if (audio.src) {
-        activeAudio = audio;
-        audio.play();
-        return;
-      }
-    }
+  if (!activeUrl) {
+    const all = getAllVisibleTracks();
+    if (all.length) playTrack(all[0].track);
+    return;
   }
-  activeAudio.paused ? activeAudio.play() : activeAudio.pause();
+  player.paused ? player.play().catch(() => {}) : player.pause();
 }
 
 function stepTrack(dir) {
-  const list = Array.from(document.querySelectorAll('audio'));
-  if (!list.length) return;
-  const idx = activeAudio ? list.indexOf(activeAudio) : -1;
-  const next = list.at((idx + dir + list.length) % list.length);
-  next.currentTime = 0;
-  next.play();
-  next.closest('tr')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const all = getAllVisibleTracks();
+  if (!all.length) return;
+  const idx = activeTrack
+    ? all.findIndex(item => item.track.folder === activeTrack.folder && item.track.name === activeTrack.name)
+    : -1;
+  const next = all.at((idx + dir + all.length) % all.length);
+  if (!next) return;
+  playTrack(next.track);
+  const row = next.tbody.querySelector(`tr[data-source="${CSS.escape(next.track.name)}"]`);
+  row?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 window.addEventListener('keydown', e => {
@@ -387,15 +424,13 @@ window.addEventListener('keydown', e => {
   else if (e.code === 'ArrowUp') { e.preventDefault(); stepTrack(-1); }
   else if (!e.ctrlKey && !e.metaKey && !e.altKey) {
     const num = Number(e.key);
-    if (num >= 0 && num <= ROLE_TAGS.length && activeAudio) {
+    if (num >= 0 && num < ROLE_TAGS.length && activeTrack) {
       e.preventDefault();
-      const row = activeAudio.closest('tr');
-      const tbody = row?.closest('tbody');
-      const sourceName = row?.dataset.source;
+      const tbody = Array.from(document.querySelectorAll('.group tbody')).find(tb => tb._folderId === activeTrack.folder);
       const tracks = tbody?._tracks;
-      const track = tracks?.find(t => t.name === sourceName);
+      const track = tracks?.find(t => t.name === activeTrack.name);
       if (track) {
-        applyLabelAndAdvance(tbody._folderId, tracks, track, ROLE_TAGS[num], tbody._rerender);
+        applyLabelAndAdvance(tbody._folderId, tracks, track, ROLE_TAGS[num], tbody);
       }
     }
   }
@@ -445,13 +480,14 @@ async function handleFiles(fileList) {
 
 function buildRowsHtml(tracks) {
   return tracks.map(t => {
-    const url = `/file/${encodeURIComponent(t.folder)}/${encodeURIComponent(t.name)}`;
+    const url = getTrackUrl(t);
     const displayName = t.draftName || t.name;
+    const isPlaying = activeTrack && activeTrack.folder === t.folder && activeTrack.name === t.name;
     const pills = ROLE_TAGS.map((tag, i) => {
       const active = t.tag === tag ? ' active' : '';
       return `<button type="button" class="tag-pill${active}" data-source="${t.name}" data-tag="${tag}" title="Shortcut: ${i}">${i}:${tag}</button>`;
     }).join('');
-    return `<tr data-source="${t.name}">
+    return `<tr data-folder="${t.folder}" data-source="${t.name}" class="${isPlaying ? 'playing-row' : ''}">
       <td>
         <code class="track-label">${displayName}</code>
         <span class="tag-pills">${pills}</span>
@@ -459,7 +495,6 @@ function buildRowsHtml(tracks) {
       <td>${t.channels === 2 ? 'Stereo' : 'Mono'}</td>
       <td>${t.duration}s</td>
       <td>${formatBytes(t.size)}</td>
-      <td class="preview-col"><audio controls preload="metadata" src="${url}"></audio></td>
       <td><a class="dl" href="${url}" download="${displayName}">Download</a></td>
     </tr>`;
   }).join('');
@@ -506,7 +541,6 @@ function renderGroup(data) {
           <th>Channels</th>
           <th class="sortable" data-sort="duration">Duration<span class="arrow"></span></th>
           <th class="sortable" data-sort="size">Size<span class="arrow"></span></th>
-          <th>Preview</th>
           <th>File</th>
         </tr>
       </thead>
@@ -517,64 +551,28 @@ function renderGroup(data) {
   const saveSortedBtn = div.querySelector('.save-sorted-btn');
   const saveBtn = div.querySelector('.save-track-btn');
 
-  function rerenderBody(activeAudioRef = activeAudio) {
-    const activeSrc = activeAudioRef?.getAttribute('src');
-    const wasPlaying = Boolean(activeAudioRef && !activeAudioRef.paused);
-    const prevTime = activeAudioRef?.currentTime || 0;
-    tbody.innerHTML = buildRowsHtml(visibleTracks);
-    if (activeSrc) {
-      const matchAud = Array.from(tbody.querySelectorAll('audio')).find(a => a.getAttribute('src') === activeSrc);
-      if (matchAud) {
-        activeAudioRef = matchAud;
-        matchAud.closest('tr')?.classList.add('playing-row');
-        pbTitle.textContent = matchAud.closest('tr')?.querySelector('.track-label')?.textContent || pbTitle.textContent;
-        if (!xfadeState?.active) {
-          matchAud.currentTime = prevTime;
-          if (wasPlaying) matchAud.play().catch(() => {});
-        }
-      }
-    }
-    return activeAudioRef;
-  }
-
   tbody._folderId = data.id;
   tbody._tracks = data.tracks;
-  tbody._rerender = rerenderBody;
+  tbody._visibleTracks = visibleTracks;
 
   tbody.addEventListener('click', e => {
+    if (e.target.closest('a.dl')) return;
     const pill = e.target.closest('.tag-pill');
     if (pill) {
       const track = data.tracks.find(t => t.name === pill.dataset.source);
-      if (track) applyLabelAndAdvance(data.id, data.tracks, track, pill.dataset.tag, rerenderBody);
+      if (track) applyLabelAndAdvance(data.id, data.tracks, track, pill.dataset.tag, tbody);
       return;
     }
     const row = e.target.closest('tr');
-    if (row && e.target.tagName !== 'AUDIO') {
-      e.preventDefault();
+    if (row) {
       const track = data.tracks.find(t => t.name === row.dataset.source);
       if (track) playTrack(track);
     }
   });
 
-  function playTrack(track) {
-    const url = `/file/${encodeURIComponent(track.folder)}/${encodeURIComponent(track.name)}`;
-    let aud = document.querySelector(`audio[src="${url}"]`);
-    if (!aud) {
-      aud = document.createElement('audio');
-      aud.setAttribute('src', url);
-      aud.setAttribute('preload', 'metadata');
-      aud.addEventListener('play', () => bindAudioToBar(aud), { once: true });
-      const row = document.querySelector(`tr[data-source="${track.name}"]`);
-      row?.querySelector('.preview-col')?.appendChild(aud);
-    }
-    if (singlePlayEl.checked) {
-      document.querySelectorAll('audio').forEach(a => { if (a !== aud && !a.paused) a.pause(); });
-    }
-    aud.play();
-  }
-
   async function runSave(btn, onlyTagged) {
     recomputeGroupDraftNames(data.tracks);
+    updateGroupRowsDOM(tbody, data.tracks);
     const sourceTracks = onlyTagged ? data.tracks.filter(t => Boolean(t.tag)) : data.tracks;
     if (!sourceTracks.length) {
       statusEl.textContent = `No labeled bits to save for ${data.id}.`;
@@ -615,43 +613,31 @@ function renderGroup(data) {
         const pA = `${a.folder}/${a.draftName || a.name}`, pB = `${b.folder}/${b.draftName || b.name}`;
         return sortAsc ? pA.localeCompare(pB, undefined, { numeric: true }) : pB.localeCompare(pA, undefined, { numeric: true });
       });
-      rerenderBody();
+      tbody._visibleTracks = visibleTracks;
+      tbody.innerHTML = buildRowsHtml(visibleTracks);
     });
   });
 
   resultsEl.prepend(div);
   hidePlayerBarIfNoTables();
+
   div.querySelector('.close-table-btn').addEventListener('click', () => {
-    const audioEls = div.querySelectorAll('audio');
-    audioEls.forEach(audio => {
-      audio.pause();
-      audio.src = '';
-      audio.load();
-    });
+    const wasPlayingThisGroup = activeTrack && activeTrack.folder === data.id;
     div.remove();
-    hidePlayerBarIfNoTables();
-    // Select first track from any remaining table
-    const remainingTables = document.querySelectorAll('.group');
-    if (remainingTables.length > 0) {
-      const firstTable = remainingTables[0];
-      const firstTrackRow = firstTable.querySelector('tr[data-source]');
-      if (firstTrackRow) {
-        const trackName = firstTrackRow.dataset.source;
-        // Find track in the table's tracks array
-        const trackData = firstTable._tracks?.find(t => t.name === trackName);
-        if (trackData) {
-          playTrack(trackData);
-        } else {
-          // Fallback: find any audio in the table and play it
-          const audios = firstTable.querySelectorAll('audio');
-          if (audios.length > 0) {
-            const firstAudio = audios[0];
-            if (firstAudio.src) {
-              playTrack({ folder: firstAudio.src.split('/').slice(0, -1).join('/'), name: firstAudio.src.split('/').pop() });
-            }
-          }
-        }
-      }
+
+    const remainingTracks = getAllVisibleTracks();
+    if (remainingTracks.length === 0) {
+      stopXfadeLoop();
+      cancelAnimationFrame(rafId);
+      player.pause();
+      player.removeAttribute('src');
+      player.load();
+      activeTrack = null;
+      activeUrl = null;
+      currentPeaks = null;
+      playerBar.classList.add('hidden');
+    } else if (wasPlayingThisGroup) {
+      playTrack(remainingTracks[0].track);
     }
   });
 }
@@ -665,7 +651,11 @@ async function clearWorkspace() {
   zipAllBtn.disabled = true;
   stopXfadeLoop();
   cancelAnimationFrame(rafId);
-  if (activeAudio) { activeAudio.pause(); activeAudio = null; }
+  player.pause();
+  player.removeAttribute('src');
+  player.load();
+  activeTrack = null;
+  activeUrl = null;
   currentPeaks = null;
   waveCache.clear();
   bufferCache.clear();
