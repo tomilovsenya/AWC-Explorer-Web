@@ -5,6 +5,7 @@ const zipAllBtn = document.getElementById('zipAllBtn');
 const autoPlayOnLabelEl = document.getElementById('autoPlayOnLabel');
 const autoResortOnLabelEl = document.getElementById('autoResortOnLabel');
 const overlayEl = document.getElementById('globalDropOverlay');
+const goTopBtn = document.getElementById('goTopBtn');
 
 const playerBar = document.getElementById('playerBar');
 const pbTitle = document.getElementById('pbTitle');
@@ -743,5 +744,15 @@ function hidePlayerBarIfNoTables() {
     playerBar.classList.add('hidden');
   }
 }
+
+function syncGoTopBtn() {
+  goTopBtn?.classList.toggle('visible', window.scrollY > 240);
+}
+
+window.addEventListener('scroll', syncGoTopBtn, { passive: true });
+goTopBtn?.addEventListener('click', () => {
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+syncGoTopBtn();
 
 hidePlayerBarIfNoTables();
