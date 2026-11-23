@@ -2,6 +2,7 @@ const fileInput = document.getElementById('fileInput');
 const statusEl = document.getElementById('status');
 const resultsEl = document.getElementById('results');
 const zipAllBtn = document.getElementById('zipAllBtn');
+const groupNavEl = document.getElementById('groupNav');
 const autoPlayOnLabelEl = document.getElementById('autoPlayOnLabel');
 const autoResortOnLabelEl = document.getElementById('autoResortOnLabel');
 const overlayEl = document.getElementById('globalDropOverlay');
@@ -35,6 +36,7 @@ let xfadeState = null;
 const waveCache = new Map();
 const bufferCache = new Map();
 const metadataSaveQueues = new Map();
+let groupNavCounter = 0;
 
 function fmtTime(sec) {
   if (!isFinite(sec) || sec < 0) return '0:00';
@@ -61,6 +63,36 @@ function escapeHtml(value) {
 
 function getTrackUrl(track) {
   return `/file/${encodeURIComponent(track.folder)}/${encodeURIComponent(track.name)}`;
+}
+
+function refreshGroupNavigation() {
+  const groups = Array.from(resultsEl.querySelectorAll('.group')).filter(group => group.querySelector('table'));
+  groupNavEl.replaceChildren();
+  groupNavEl.hidden = groups.length < 2;
+  document.body.classList.toggle('has-group-nav', groups.length >= 2);
+  if (groups.length < 2) {
+    document.body.style.removeProperty('--group-nav-width');
+    return;
+  }
+
+  const label = document.createElement('span');
+  label.textContent = 'Jump to:';
+  groupNavEl.append(label);
+  groups.forEach((group, index) => {
+    const tableNumber = index + 1;
+    const nameInput = group.querySelector('.awc-display-name');
+    const folderId = group.querySelector('tbody')?._folderId;
+    const link = document.createElement('a');
+    link.href = `#${group.id}`;
+    link.textContent = `#${tableNumber}`;
+    link.title = nameInput?.value.trim() || `AWC ${folderId}`;
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      group.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    groupNavEl.append(link);
+  });
+  document.body.style.setProperty('--group-nav-width', `${groupNavEl.offsetWidth}px`);
 }
 
 function getCategoryOrder(track) {
@@ -353,6 +385,13 @@ function updateSeekLoop() {
   if (!player.paused) rafId = requestAnimationFrame(updateSeekLoop);
 }
 
+function centerTrackRow(track) {
+  const row = Array.from(document.querySelectorAll('tbody tr')).find(candidate =>
+    candidate.dataset.folder === track.folder && candidate.dataset.source === track.name
+  );
+  row?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+}
+
 function playTrack(track) {
   if (!track) return;
   stopXfadeLoop();
@@ -363,6 +402,7 @@ function playTrack(track) {
 
   playerBar.classList.remove('hidden');
   syncRowHighlight();
+  centerTrackRow(track);
 
   pbTitle.textContent = track.draftName || track.name;
   pbSub.textContent = track.channels === 2 ? 'Stereo' : 'Mono';
@@ -478,8 +518,6 @@ function stepTrack(dir) {
   const next = all.at((idx + dir + all.length) % all.length);
   if (!next) return;
   playTrack(next.track);
-  const row = next.tbody.querySelector(`tr[data-source="${CSS.escape(next.track.name)}"]`);
-  row?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 window.addEventListener('keydown', e => {
@@ -578,6 +616,7 @@ function buildRowsHtml(tracks) {
 function renderGroup(data) {
   const div = document.createElement('div');
   div.className = 'group';
+  div.id = `awc-group-${++groupNavCounter}`;
   if (data.error) {
     div.innerHTML = `<div class="group-header"><strong>${escapeHtml(data.file)}</strong><span class="badge" style="color:#f87171;">${escapeHtml(data.error)}</span></div>`;
     resultsEl.prepend(div);
@@ -593,6 +632,7 @@ function renderGroup(data) {
   let visibleTracks = data.tracks;
   const totalBytes = data.tracks.reduce((sum, t) => sum + (t.size || 0), 0);
   const cacheBadge = data.cached ? `<span class="badge" style="color:#4ade80;">Cached</span>` : '';
+  const originalNameBadge = `<span class="badge original-awc-name"${data.display_name === data.file ? ' hidden' : ''}>Original AWC: ${escapeHtml(data.file)}</span>`;
 
   div.innerHTML = `
     <div class="group-header">
@@ -600,6 +640,7 @@ function renderGroup(data) {
         <input type="text" class="awc-display-name" aria-label="AWC display name" title="Edit the name used for this AWC" value="${escapeHtml(data.display_name)}">
         <div class="group-meta">
           <span class="badge">Folder: output/${data.id}/</span>
+          ${originalNameBadge}
           <span class="badge">${formatBytes(totalBytes)}</span>
           <span class="badge">${data.tracks.length} streams</span>
           ${cacheBadge}
@@ -628,6 +669,7 @@ function renderGroup(data) {
 
   const tbody = div.querySelector('tbody');
   const displayNameInput = div.querySelector('.awc-display-name');
+  const originalNameBadgeEl = div.querySelector('.original-awc-name');
   const saveSortedBtn = div.querySelector('.save-sorted-btn');
   const saveBtn = div.querySelector('.save-track-btn');
   const headers = div.querySelectorAll('th.sortable');
@@ -683,6 +725,8 @@ function renderGroup(data) {
     data.display_name = displayNameInput.value.trim() || data.file;
     displayNameInput.value = data.display_name;
     tbody._groupDisplayName = data.display_name;
+    originalNameBadgeEl.hidden = data.display_name === data.file;
+    refreshGroupNavigation();
     persistGroupLabels(data.id, data.tracks, data.display_name)
       .then(() => { statusEl.textContent = `Saved AWC name for ${data.file}.`; })
       .catch(error => { statusEl.textContent = `Unable to save AWC name: ${error.message}`; });
@@ -737,6 +781,7 @@ function renderGroup(data) {
   });
 
   resultsEl.prepend(div);
+  refreshGroupNavigation();
   const groupHeader = div.querySelector('.group-header');
   const updateGroupHeaderHeight = () => {
     div.style.setProperty('--group-header-height', `${groupHeader.offsetHeight}px`);
@@ -752,6 +797,7 @@ function renderGroup(data) {
     const wasPlayingThisGroup = activeTrack && activeTrack.folder === data.id;
     div._headerResizeObserver?.disconnect();
     div.remove();
+    refreshGroupNavigation();
 
     const remainingTracks = getAllVisibleTracks();
     if (remainingTracks.length === 0) {
@@ -776,7 +822,9 @@ function downloadAllZip() {
 
 async function clearWorkspace() {
   await fetch('/clear', { method: 'POST' });
+  resultsEl.querySelectorAll('.group').forEach(group => group._headerResizeObserver?.disconnect());
   resultsEl.innerHTML = '';
+  refreshGroupNavigation();
   statusEl.textContent = 'Cleared output folder.';
   zipAllBtn.disabled = true;
   stopXfadeLoop();
