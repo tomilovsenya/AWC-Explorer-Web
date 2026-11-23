@@ -51,18 +51,50 @@ function formatBytes(bytes) {
   return `${(bytes / 1048576).toFixed(2)} MB`;
 }
 
-function buildCategoryStatsHtml(tracks) {
+function updateGroupProgress(group, tracks) {
+  if (!group) return;
+  const progress = group.querySelector('.group-progress-bar');
+  if (!progress) return;
+
   const counts = new Map(ROLE_TAGS.map(tag => [tag, 0]));
   tracks.forEach(track => {
     if (counts.has(track.tag)) counts.set(track.tag, counts.get(track.tag) + 1);
   });
-  const categorizedCount = Array.from(counts.values()).reduce((sum, count) => sum + count, 0);
-  const stats = ROLE_TAGS
+  const labeledCount = Array.from(counts.values()).reduce((sum, count) => sum + count, 0);
+  const unlabeledCount = tracks.length - labeledCount;
+  const total = tracks.length || 1;
+  const segments = ROLE_TAGS
     .filter(tag => counts.get(tag) > 0)
-    .map(tag => `<span class="badge category-stat tag-color-${tag.toLowerCase()}">${tag}: ${counts.get(tag)}</span>`);
-  const unlabeledCount = tracks.length - categorizedCount;
-  if (unlabeledCount > 0) stats.push(`<span class="badge category-stat">Unlabeled: ${unlabeledCount}</span>`);
-  return stats.join('');
+    .map(tag => {
+      const count = counts.get(tag);
+      const percentage = count / total * 100;
+      return `<span class="progress-segment tag-color-${tag.toLowerCase()}" data-category="${tag}" style="width:${percentage}%" title="${tag}: ${count} (${percentage.toFixed(1)}%)"><span class="progress-segment-label">${tag}</span></span>`;
+    });
+  if (unlabeledCount > 0) {
+    const percentage = unlabeledCount / total * 100;
+    segments.push(`<span class="progress-segment progress-unlabeled" data-category="" style="width:${percentage}%" title="Unlabeled: ${unlabeledCount} (${percentage.toFixed(1)}%)"><span class="progress-segment-label">Unlabeled</span></span>`);
+  }
+  progress.innerHTML = segments.join('');
+  const legend = group.querySelector('.group-progress-labels');
+  const legendItems = [];
+  progress.querySelectorAll('.progress-segment').forEach(segment => {
+    const label = segment.querySelector('.progress-segment-label');
+    const style = getComputedStyle(segment);
+    const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    const border = parseFloat(style.borderRightWidth);
+    const availableWidth = segment.getBoundingClientRect().width - padding - border;
+    if (label.getBoundingClientRect().width > availableWidth) {
+      label.hidden = true;
+      const category = segment.dataset.category;
+      const labelClass = category ? `tag-color-${category.toLowerCase()}` : 'progress-label-unlabeled';
+      legendItems.push(`<span class="progress-label ${labelClass}">${category || 'Unlabeled'}</span>`);
+    }
+  });
+  legend.innerHTML = legendItems.join('');
+  legend.hidden = legendItems.length === 0;
+  progress.setAttribute('aria-valuemax', String(total));
+  progress.setAttribute('aria-valuenow', String(labeledCount));
+  progress.setAttribute('aria-valuetext', `${labeledCount} of ${tracks.length} tracks labeled`);
 }
 
 function escapeHtml(value) {
@@ -197,8 +229,7 @@ function applyLabelAndAdvance(folderId, tracks, track, tag, tbody) {
   track.tag = tag;
   recomputeGroupDraftNames(tracks);
   const group = tbody?.closest('.group');
-  const categoryStatsEl = group?.querySelector('.category-stats');
-  if (categoryStatsEl) categoryStatsEl.innerHTML = buildCategoryStatsHtml(tracks);
+  updateGroupProgress(group, tracks);
   persistGroupLabels(folderId, tracks, tbody?._groupDisplayName || folderId)
     .catch(error => { statusEl.textContent = `Unable to save labels: ${error.message}`; });
 
@@ -409,9 +440,10 @@ function centerTrackRow(track) {
   row?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
 }
 
-function playTrack(track) {
-  if (!track) return;
+function selectTrack(track) {
+  if (!track) return null;
   stopXfadeLoop();
+  player.pause();
 
   const url = getTrackUrl(track);
   activeTrack = track;
@@ -419,13 +451,22 @@ function playTrack(track) {
 
   playerBar.classList.remove('hidden');
   syncRowHighlight();
-  centerTrackRow(track);
 
   pbTitle.textContent = track.draftName || track.name;
   pbSub.textContent = track.channels === 2 ? 'Stereo' : 'Mono';
-
   player.src = url;
   player.currentTime = 0;
+  currentPeaks = waveCache.get(url) || null;
+  pbPlayBtn.textContent = '▶';
+  pbTime.textContent = `0:00 / ${fmtTime(track.duration || 0)}`;
+  drawWaveform(0);
+  return url;
+}
+
+function playTrack(track) {
+  const url = selectTrack(track);
+  if (!url) return;
+  centerTrackRow(track);
 
   if (loopFadeEl.checked && bufferCache.has(url)) {
     loadWaveform(url);
@@ -523,7 +564,12 @@ function toggleActivePlay() {
     if (all.length) playTrack(all[0].track);
     return;
   }
-  player.paused ? player.play().catch(() => {}) : player.pause();
+  if (player.paused) {
+    player.play().catch(() => {});
+    if (!currentPeaks) loadWaveform(activeUrl);
+  } else {
+    player.pause();
+  }
 }
 
 function stepTrack(dir) {
@@ -658,7 +704,6 @@ function renderGroup(data) {
         <div class="group-meta">
           <span class="badge">Folder: output/${data.id}/</span>
           ${originalNameBadge}
-          <div class="category-stats">${buildCategoryStatsHtml(data.tracks)}</div>
           <span class="badge">${formatBytes(totalBytes)}</span>
           <span class="badge">${data.tracks.length} streams</span>
           ${cacheBadge}
@@ -670,6 +715,8 @@ function renderGroup(data) {
         <button type="button" class="secondary save-track-btn">Save All (TRACK_${data.id})</button>
         <a class="dl" href="/zip/${encodeURIComponent(data.id)}">Download ${data.id}.zip</a>
       </div>
+      <div class="group-progress group-progress-bar" role="progressbar" aria-label="Track category distribution" aria-valuemin="0"></div>
+      <div class="group-progress-labels" aria-label="Categories requiring more label space" hidden></div>
     </div>
     <table>
       <thead>
@@ -685,16 +732,19 @@ function renderGroup(data) {
       <tbody>${buildRowsHtml(visibleTracks)}</tbody>
     </table>`;
 
+  updateGroupProgress(div, data.tracks);
   const tbody = div.querySelector('tbody');
   const displayNameInput = div.querySelector('.awc-display-name');
   const originalNameBadgeEl = div.querySelector('.original-awc-name');
   const saveSortedBtn = div.querySelector('.save-sorted-btn');
   const saveBtn = div.querySelector('.save-track-btn');
+  const progress = div.querySelector('.group-progress-bar');
   const headers = div.querySelectorAll('th.sortable');
 
   function sortTracksByKey(key, toggleDirection) {
     sortAsc = toggleDirection ? ((sortKey === key) ? !sortAsc : (key === 'path' || key === 'category')) : sortAsc;
     sortKey = key;
+    progress.classList.toggle('category-sort-active', sortKey === 'category');
     headers.forEach(h => {
       h.querySelector('.arrow').textContent = h.dataset.sort === sortKey ? (sortAsc ? '▲' : '▼') : '';
     });
@@ -723,6 +773,27 @@ function renderGroup(data) {
     sortTracksByKey('category', false);
     return true;
   };
+
+  progress.addEventListener('click', event => {
+    if (sortKey !== 'category') return;
+    const segment = event.target.closest('.progress-segment');
+    if (!segment || !progress.contains(segment)) return;
+    const category = segment.dataset.category;
+    const target = visibleTracks.find(track =>
+      category ? track.tag === category : getCategoryOrder(track) === 999
+    );
+    if (!target) return;
+    selectTrack(target);
+    const row = Array.from(tbody.rows).find(candidate => candidate.dataset.source === target.name);
+    if (!row) return;
+    const groupHeader = progress.closest('.group-header');
+    const stickyTop = parseFloat(getComputedStyle(groupHeader).top) || 0;
+    const stickyHeight = groupHeader.offsetHeight + div.querySelector('thead').offsetHeight;
+    window.scrollTo({
+      top: window.scrollY + row.getBoundingClientRect().top - stickyTop - stickyHeight,
+      behavior: 'smooth'
+    });
+  });
 
   tbody.addEventListener('click', e => {
     if (e.target.closest('a.dl')) return;
@@ -802,6 +873,7 @@ function renderGroup(data) {
   refreshGroupNavigation();
   const groupHeader = div.querySelector('.group-header');
   const updateGroupHeaderHeight = () => {
+    updateGroupProgress(div, data.tracks);
     div.style.setProperty('--group-header-height', `${groupHeader.offsetHeight}px`);
   };
   updateGroupHeaderHeight();
