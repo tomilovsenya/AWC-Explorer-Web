@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Project Americas AWC Extractor</title>
+<title>AWC Explorer</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
   :root { --bg: #0f1117; --card: #181b24; --accent: #ff4fa3; --accent2: #5865f2; --text: #eef0f6; --muted: #8b92a8; }
@@ -11,6 +11,7 @@
   .container { width: 90%; max-width: 1800px; margin: 0 auto; }
   header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; position: sticky; top: 0; z-index: 20; background: var(--bg, #0f1219);}
   h1 { margin: 0; font-size: 1.4rem; }
+  .brand-logo { display: block; width: 160px; height: 40px; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
   .controls { display: flex; gap: 12px; align-items: center; }
   select, button { background: var(--card); color: var(--text); border: 1px solid #2d3244; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; }
   button.secondary { background: var(--accent2); border-color: var(--accent2); color: #fff; font-weight: 600; }
@@ -97,7 +98,7 @@
 
 <div class="container">
   <header>
-    <h1>Project Americas <code>.awc</code> Audio Extractor</h1>
+    <h1><img class="brand-logo" src="/logo.svg" alt="AWC Explorer" draggable="false"></h1>
     <div class="controls">
       <label class="toggle" title="Play next bit automatically after labeling current bit"><input type="checkbox" id="autoPlayOnLabel" checked><span>Auto-Next on Label</span></label>
       <label class="toggle" title="Automatically re-sort by category when currently sorted by Category"><input type="checkbox" id="autoResortOnLabel" checked><span>Auto Re-Sort on Label</span></label>      <label for="fmt" style="color:var(--muted);font-size:0.9rem;">Format:</label>
