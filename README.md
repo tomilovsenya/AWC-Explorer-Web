@@ -16,7 +16,7 @@ A fast, multi-core `.awc` (Audio Wave Container) extractor and browser-based aud
   * **Loop X-Fade:** Seamless equal-power 3% crossfade looping powered by the Web Audio API.
   * **Single Playback & Auto-Next:** Automatically pauses overlapping tracks or plays sequentially through an entire soundbank.
   * **Keyboard Shortcuts:** `Space` to Play/Pause, `↑` / `↓` arrows to step between tracks.
-* **Editable AWC Names & Track Labels:** Rename each imported AWC in its tracklist; the name and category labels persist in `labels.json` and are restored on re-import.
+* **Editable AWC Names & Track Labels:** Rename each imported AWC in its tracklist; the name and category labels persist in `labels.json`, with an ID-to-name index in `output/awc_names.json` used to restore names from IDs in filenames.
 * **Sortable Tracklists & Batch ZIPs:** Sort streams by **Output Path**, **Duration**, or **File Size**, save labeled tracks to `TRACK_<ID> - <Name>/`, and download individual `<ID>.zip` archives or all extracted folders at once.
 
 ---
@@ -28,7 +28,7 @@ A fast, multi-core `.awc` (Audio Wave Container) extractor and browser-based aud
 ├── awc_web_ui.py    # Local HTTP server with byte-range streaming & ZIP packaging
 ├── index.html       # Web UI layout and styling
 ├── app.js           # Waveform renderer, crossfade loop engine & UI logic
-└── output/          # Auto-created directory for extracted <ID>/<ID>_BIT_XX.<ext> files
+└── output/          # Extracted tracks, labels, and the awc_names.json ID-to-name index
 ```
 
 ---

@@ -1,5 +1,6 @@
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -200,9 +201,27 @@ def _probe_ogg_opus(path: Path) -> tuple[int, float]:
     return channels, dur
 
 
+def _read_indexed_awc_name(base_id: str, work_dir: Path) -> str | None:
+    index_file = work_dir / "awc_names.json"
+    if not index_file.is_file():
+        return None
+    try:
+        names = json.loads(index_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        logging.warning("Unable to read AWC name index %s: %s", index_file, error)
+        return None
+    if not isinstance(names, dict):
+        logging.warning("Invalid AWC name index format in %s", index_file)
+        return None
+    name = names.get(base_id)
+    if not isinstance(name, str):
+        return None
+    return name.strip() or None
+
+
 def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: str) -> str | None:
     saved_map: dict[str, str] = {}
-    display_name = None
+    display_name = _read_indexed_awc_name(base_id, work_dir)
     track_dirs = [work_dir / f"TRACK_{base_id}"]
     track_dirs.extend(sorted(work_dir.glob(f"TRACK_{base_id} - *")))
     for candidate_dir in (work_dir / base_id, *track_dirs):

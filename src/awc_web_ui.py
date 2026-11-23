@@ -1,23 +1,82 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
+import logging
 from pathlib import Path
 import re
+from threading import Lock
 import urllib.parse
 import webbrowser
 import zipfile
 
-from awc_core import get_cached_awc, process_awc_bytes
+from awc_core import get_base_id, get_cached_awc, process_awc_bytes
 
 PORT = 8765
 BASE_DIR = Path(__file__).resolve().parent
 WORK_DIR = BASE_DIR / "output"
 WORK_DIR.mkdir(parents=True, exist_ok=True)
+NAME_INDEX_LOCK = Lock()
 
 
 def safe_folder_label(value):
     label = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value)).strip(" .")
     return label[:120]
+
+
+def _read_awc_name_index(index_file):
+    if not index_file.is_file():
+        return {}
+    names = json.loads(index_file.read_text(encoding="utf-8"))
+    if not isinstance(names, dict):
+        raise ValueError(f"Invalid AWC name index format in {index_file}")
+    return {
+        str(key): value
+        for key, value in names.items()
+        if isinstance(value, str)
+    }
+
+
+def _write_awc_name_index(index_file, names):
+    temp_file = index_file.with_name(f"{index_file.name}.tmp")
+    temp_file.write_text(json.dumps(names, indent=2), encoding="utf-8")
+    temp_file.replace(index_file)
+
+
+def save_awc_name(base_id, display_name):
+    index_file = WORK_DIR / "awc_names.json"
+    with NAME_INDEX_LOCK:
+        names = _read_awc_name_index(index_file)
+        names[str(base_id)] = display_name
+        _write_awc_name_index(index_file, names)
+
+
+def seed_awc_name_index():
+    index_file = WORK_DIR / "awc_names.json"
+    with NAME_INDEX_LOCK:
+        names = _read_awc_name_index(index_file)
+        changed = False
+        for source_dir in WORK_DIR.iterdir():
+            if not source_dir.is_dir() or source_dir.name.startswith("TRACK_"):
+                continue
+            labels_file = source_dir / "labels.json"
+            if not labels_file.is_file():
+                continue
+            try:
+                metadata = json.loads(labels_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as error:
+                logging.warning("Unable to read AWC metadata %s: %s", labels_file, error)
+                continue
+            if not isinstance(metadata, dict):
+                continue
+            display_name = metadata.get("display_name")
+            if not isinstance(display_name, str) or not display_name.strip():
+                continue
+            base_id = get_base_id(source_dir.name)
+            if base_id not in names:
+                names[base_id] = display_name.strip()
+                changed = True
+        if changed:
+            _write_awc_name_index(index_file, names)
 
 
 class AWCHandler(BaseHTTPRequestHandler):
@@ -159,6 +218,7 @@ class AWCHandler(BaseHTTPRequestHandler):
                 "labels": clean,
             }
             (src_dir / "labels.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            save_awc_name(get_base_id(folder), display_name)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", "2")
@@ -217,6 +277,7 @@ class AWCHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    seed_awc_name_index()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), AWCHandler)
     url = f"http://127.0.0.1:{PORT}"
     print(f"GTA VI AWC Web UI running at {url} (Output: {WORK_DIR})")

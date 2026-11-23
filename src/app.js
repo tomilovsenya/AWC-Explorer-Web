@@ -596,12 +596,14 @@ function renderGroup(data) {
 
   div.innerHTML = `
     <div class="group-header">
-      <div>
+      <div class="group-main">
         <input type="text" class="awc-display-name" aria-label="AWC display name" title="Edit the name used for this AWC" value="${escapeHtml(data.display_name)}">
-        <span class="badge">Folder: output/${data.id}/</span>
-        <span class="badge">${formatBytes(totalBytes)}</span>
-        <span class="badge">${data.tracks.length} streams</span>
-        ${cacheBadge}
+        <div class="group-meta">
+          <span class="badge">Folder: output/${data.id}/</span>
+          <span class="badge">${formatBytes(totalBytes)}</span>
+          <span class="badge">${data.tracks.length} streams</span>
+          ${cacheBadge}
+        </div>
       </div>
       <div style="display:flex; gap:8px; align-items:center;">
         <button type="button" class="secondary close-table-btn">Close</button>
@@ -735,10 +737,20 @@ function renderGroup(data) {
   });
 
   resultsEl.prepend(div);
+  const groupHeader = div.querySelector('.group-header');
+  const updateGroupHeaderHeight = () => {
+    div.style.setProperty('--group-header-height', `${groupHeader.offsetHeight}px`);
+  };
+  updateGroupHeaderHeight();
+  if (typeof ResizeObserver !== 'undefined') {
+    div._headerResizeObserver = new ResizeObserver(updateGroupHeaderHeight);
+    div._headerResizeObserver.observe(groupHeader);
+  }
   hidePlayerBarIfNoTables();
 
   div.querySelector('.close-table-btn').addEventListener('click', () => {
     const wasPlayingThisGroup = activeTrack && activeTrack.folder === data.id;
+    div._headerResizeObserver?.disconnect();
     div.remove();
 
     const remainingTracks = getAllVisibleTracks();
