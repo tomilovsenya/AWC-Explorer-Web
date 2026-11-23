@@ -26,6 +26,7 @@ A fast, multi-core `.awc` (Audio Wave Container) extractor and browser-based aud
 ```text
 ├── awc_core.py      # Binary .awc parser, Ogg Opus muxer, FFmpeg bridge & cache reader
 ├── awc_web_ui.py    # Local HTTP server with byte-range streaming & ZIP packaging
+├── favicon.svg      # Neon AWC browser icon
 ├── index.html       # Web UI layout and styling
 ├── app.js           # Waveform renderer, crossfade loop engine & UI logic
 └── output/          # Extracted tracks, labels, and the awc_names.json ID-to-name index
