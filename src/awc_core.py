@@ -289,7 +289,9 @@ def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: s
                     subgroup = fallback_subgroup
         if tag:
             t["tag"] = tag
-        if subgroup:
+        if t.get("tag") == "JUNK":
+            t.pop("subgroup", None)
+        elif subgroup:
             t["subgroup"] = subgroup
     return display_name
 

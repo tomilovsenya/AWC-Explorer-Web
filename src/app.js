@@ -19,7 +19,7 @@ const pbTime = document.getElementById('pbTime');
 const autoNextEl = document.getElementById('autoNext');
 const loopFadeEl = document.getElementById('loopFade');
 
-const ROLE_TAGS = ['INTRO', 'OUTRO', 'PAD', 'PERC', 'LEAD', 'BASS', 'DRUMS', 'SYNTH', 'OTHER', 'CALM'];
+const ROLE_TAGS = ['INTRO', 'OUTRO', 'PAD', 'PERC', 'LEAD', 'BASS', 'DRUMS', 'SYNTH', 'OTHER', 'CALM', 'JUNK'];
 const TRACK_GROUPS = ['A', 'B', 'C', 'D'];
 
 const player = new Audio();
@@ -148,6 +148,7 @@ function getCategoryOrder(track) {
 }
 
 function getTrackGroupOrder(track) {
+  if (track.tag === 'JUNK') return TRACK_GROUPS.length;
   const idx = TRACK_GROUPS.indexOf(track.subgroup);
   return idx >= 0 ? idx : TRACK_GROUPS.length;
 }
@@ -159,6 +160,7 @@ function recomputeGroupDraftNames(tracks) {
       t.draftName = t.name;
       return;
     }
+    if (t.tag === 'JUNK') t.subgroup = null;
     const subgroup = TRACK_GROUPS.includes(t.subgroup) ? t.subgroup : '';
     const countKey = `${t.tag}:${subgroup}`;
     const nextNum = (counts.get(countKey) || 0) + 1;
@@ -178,7 +180,7 @@ function persistGroupLabels(folderId, tracks, displayName) {
   tracks.forEach(t => {
     const metadata = {};
     if (t.tag) metadata.category = t.tag;
-    if (TRACK_GROUPS.includes(t.subgroup)) metadata.subgroup = t.subgroup;
+    if (t.tag && t.tag !== 'JUNK' && TRACK_GROUPS.includes(t.subgroup)) metadata.subgroup = t.subgroup;
     if (Object.keys(metadata).length) labels[t.name] = metadata;
   });
   const previousSave = metadataSaveQueues.get(folderId) || Promise.resolve();
@@ -218,9 +220,11 @@ function updateGroupRowsDOM(tbody, tracks) {
     tr.querySelectorAll('.tag-pill').forEach(pill => {
       pill.classList.toggle('active', pill.dataset.tag === t.tag);
     });
+    const subgroupPills = tr.querySelector('.subgroup-pills');
+    if (subgroupPills) subgroupPills.hidden = t.tag === 'JUNK';
     tr.querySelectorAll('.subgroup-pill').forEach(pill => {
       const active = pill.dataset.subgroup === t.subgroup;
-      pill.disabled = !t.tag;
+      pill.disabled = !t.tag || t.tag === 'JUNK';
       pill.classList.toggle('active', active);
       pill.setAttribute('aria-pressed', String(active));
     });
@@ -232,10 +236,11 @@ function updateGroupRowsDOM(tbody, tracks) {
 }
 
 function applyTrackSubgroup(folderId, tracks, track, subgroup, tbody, toggleSelection = false) {
-  if (!track?.tag || !TRACK_GROUPS.includes(subgroup)) return;
+  if (!track?.tag || track.tag === 'JUNK' || !TRACK_GROUPS.includes(subgroup)) return;
   const previousSubgroup = track.subgroup;
   const clearing = toggleSelection && previousSubgroup === subgroup;
-  const shouldAdvance = !clearing && previousSubgroup !== subgroup;
+  const nextSubgroup = clearing ? null : subgroup;
+  const shouldAdvance = previousSubgroup !== nextSubgroup;
   const previousVisible = tbody?._visibleTracks ? Array.from(tbody._visibleTracks) : Array.from(tracks);
   const previousIndex = previousVisible.findIndex(item =>
     item.folder === track.folder && item.name === track.name
@@ -244,7 +249,7 @@ function applyTrackSubgroup(folderId, tracks, track, subgroup, tbody, toggleSele
     ? previousVisible[(previousIndex + 1) % previousVisible.length]
     : null;
 
-  track.subgroup = clearing ? null : subgroup;
+  track.subgroup = nextSubgroup;
   recomputeGroupDraftNames(tracks);
   tbody?._sortByCategory?.();
   if (tbody) updateGroupRowsDOM(tbody, tracks);
@@ -646,13 +651,13 @@ window.addEventListener('keydown', e => {
       const tbody = Array.from(document.querySelectorAll('.group tbody')).find(tb => tb._folderId === activeTrack.folder);
       const tracks = tbody?._tracks;
       const track = tracks?.find(t => t.name === activeTrack.name);
-      if (track?.tag) {
+      if (track?.tag && track.tag !== 'JUNK') {
         e.preventDefault();
         applyTrackSubgroup(tbody._folderId, tracks, track, subgroup, tbody, true);
       }
     } else {
       const num = Number(e.key);
-      if (num >= 0 && num < ROLE_TAGS.length && activeTrack) {
+      if (num >= 0 && num < 10 && activeTrack) {
         e.preventDefault();
         const tbody = Array.from(document.querySelectorAll('.group tbody')).find(tb => tb._folderId === activeTrack.folder);
         const tracks = tbody?._tracks;
@@ -719,18 +724,23 @@ function buildRowsHtml(tracks) {
     const isPlaying = activeTrack && activeTrack.folder === t.folder && activeTrack.name === t.name;
     const pills = ROLE_TAGS.map((tag, i) => {
       const active = t.tag === tag ? ' active' : '';
-      return `<button type="button" class="tag-pill tag-color-${tag.toLowerCase()}${active}" data-source="${t.name}" data-tag="${tag}" title="Shortcut: ${i}">${i}:${tag}</button>`;
+      const shortcut = i < 10 ? `${i}:` : '';
+      const title = i < 10 ? `Shortcut: ${i}` : 'Broken or junk track';
+      return `<button type="button" class="tag-pill tag-color-${tag.toLowerCase()}${active}" data-source="${t.name}" data-tag="${tag}" title="${title}">${shortcut}${tag}</button>`;
     }).join('');
     const subgroupPills = TRACK_GROUPS.map(letter => {
       const active = t.subgroup === letter ? ' active' : '';
-      const disabled = t.tag ? '' : ' disabled';
-      const title = t.tag ? `Similarity group ${letter} (shortcut: ${letter}; press or click again to clear)` : 'Choose a category first';
+      const disabled = t.tag && t.tag !== 'JUNK' ? '' : ' disabled';
+      const title = t.tag && t.tag !== 'JUNK'
+        ? `Similarity group ${letter} (shortcut: ${letter}; press or click again to clear)`
+        : 'Choose a non-JUNK category first';
       return `<button type="button" class="subgroup-pill${active}" data-source="${t.name}" data-subgroup="${letter}" aria-pressed="${t.subgroup === letter}" aria-keyshortcuts="${letter}" title="${title}"${disabled}>${letter}</button>`;
     }).join('');
+    const subgroupHidden = t.tag === 'JUNK' ? ' hidden' : '';
     return `<tr data-folder="${t.folder}" data-source="${t.name}" class="${isPlaying ? 'playing-row' : ''}">
       <td><code class="track-label">${displayName}</code></td>
       <td><span class="tag-pills">${pills}</span></td>
-      <td><span class="subgroup-pills">${subgroupPills}</span></td>
+      <td><span class="subgroup-pills"${subgroupHidden}>${subgroupPills}</span></td>
       <td>${t.duration}s</td>
       <td>${formatBytes(t.size)}</td>
       <td><a class="dl" href="${url}" download="${displayName}">Download</a></td>
