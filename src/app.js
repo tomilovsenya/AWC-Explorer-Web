@@ -21,7 +21,7 @@ const ROLE_TAGS = ['INTRO', 'OUTRO', 'PAD', 'PERC', 'LEAD', 'BASS', 'DRUMS', 'SY
 const player = new Audio();
 player.preload = 'metadata';
 
-let activeTrack = null; // { folder, name, draftName, channels, duration, size, tag }
+let activeTrack = null;
 let activeUrl = null;
 let isSeeking = false;
 let rafId = null;
@@ -48,6 +48,11 @@ function formatBytes(bytes) {
 
 function getTrackUrl(track) {
   return `/file/${encodeURIComponent(track.folder)}/${encodeURIComponent(track.name)}`;
+}
+
+function getCategoryOrder(track) {
+  const idx = track.tag ? ROLE_TAGS.indexOf(track.tag) : -1;
+  return idx >= 0 ? idx : 999;
 }
 
 function recomputeGroupDraftNames(tracks) {
@@ -488,10 +493,8 @@ function buildRowsHtml(tracks) {
       return `<button type="button" class="tag-pill${active}" data-source="${t.name}" data-tag="${tag}" title="Shortcut: ${i}">${i}:${tag}</button>`;
     }).join('');
     return `<tr data-folder="${t.folder}" data-source="${t.name}" class="${isPlaying ? 'playing-row' : ''}">
-      <td>
-        <code class="track-label">${displayName}</code>
-        <span class="tag-pills">${pills}</span>
-      </td>
+      <td><code class="track-label">${displayName}</code></td>
+      <td><span class="tag-pills">${pills}</span></td>
       <td>${t.channels === 2 ? 'Stereo' : 'Mono'}</td>
       <td>${t.duration}s</td>
       <td>${formatBytes(t.size)}</td>
@@ -538,6 +541,7 @@ function renderGroup(data) {
       <thead>
         <tr>
           <th class="sortable" data-sort="path">Output Path<span class="arrow">▲</span></th>
+          <th class="sortable" data-sort="category">Category<span class="arrow"></span></th>
           <th>Channels</th>
           <th class="sortable" data-sort="duration">Duration<span class="arrow"></span></th>
           <th class="sortable" data-sort="size">Size<span class="arrow"></span></th>
@@ -604,10 +608,14 @@ function renderGroup(data) {
   headers.forEach(th => {
     th.addEventListener('click', () => {
       const key = th.dataset.sort;
-      sortAsc = (sortKey === key) ? !sortAsc : (key === 'path');
+      sortAsc = (sortKey === key) ? !sortAsc : (key === 'path' || key === 'category');
       sortKey = key;
       headers.forEach(h => { h.querySelector('.arrow').textContent = h.dataset.sort === sortKey ? (sortAsc ? '▲' : '▼') : ''; });
       visibleTracks = Array.from(data.tracks).sort((a, b) => {
+        if (sortKey === 'category') {
+          const cA = getCategoryOrder(a), cB = getCategoryOrder(b);
+          if (cA !== cB) return sortAsc ? (cA - cB) : (cB - cA);
+        }
         if (sortKey === 'duration') return sortAsc ? (a.duration - b.duration) : (b.duration - a.duration);
         if (sortKey === 'size') return sortAsc ? ((a.size || 0) - (b.size || 0)) : ((b.size || 0) - (a.size || 0));
         const pA = `${a.folder}/${a.draftName || a.name}`, pB = `${b.folder}/${b.draftName || b.name}`;
