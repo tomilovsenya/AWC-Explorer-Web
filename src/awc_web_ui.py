@@ -220,11 +220,20 @@ class AWCHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length) or b"{}")
             folder = Path(payload.get("folder", "")).name
             labels = payload.get("labels", {})
+            subgroups = payload.get("subgroups", {})
             src_dir = (WORK_DIR / folder).resolve()
             if WORK_DIR.resolve() not in src_dir.parents or not src_dir.is_dir():
                 self.send_error(404)
                 return
             clean = {Path(k).name: str(v) for k, v in labels.items() if v}
+            if not isinstance(subgroups, dict):
+                self.send_error(400, "Invalid track groups")
+                return
+            clean_subgroups = {
+                Path(k).name: v
+                for k, v in subgroups.items()
+                if isinstance(k, str) and isinstance(v, str) and v in ("A", "B", "C", "D")
+            }
             display_name = payload.get("display_name", "")
             if not isinstance(display_name, str):
                 self.send_error(400, "Invalid AWC display name")
@@ -232,6 +241,7 @@ class AWCHandler(BaseHTTPRequestHandler):
             metadata = {
                 "display_name": display_name,
                 "labels": clean,
+                "subgroups": clean_subgroups,
             }
             (src_dir / "labels.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
             save_awc_name(get_base_id(folder), display_name)

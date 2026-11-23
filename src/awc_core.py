@@ -221,6 +221,7 @@ def _read_indexed_awc_name(base_id: str, work_dir: Path) -> str | None:
 
 def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: str) -> str | None:
     saved_map: dict[str, str] = {}
+    saved_subgroups: dict[str, str] = {}
     display_name = _read_indexed_awc_name(base_id, work_dir)
     track_dirs = [work_dir / f"TRACK_{base_id}"]
     track_dirs.extend(sorted(work_dir.glob(f"TRACK_{base_id} - *")))
@@ -235,36 +236,49 @@ def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: s
                     labels = raw.get("labels") if isinstance(raw.get("labels"), dict) else raw
                     if not saved_map and labels:
                         saved_map = {str(k): str(v) for k, v in labels.items() if v}
+                    subgroups = raw.get("subgroups")
+                    if not saved_subgroups and isinstance(subgroups, dict):
+                        saved_subgroups = {
+                            str(k): v
+                            for k, v in subgroups.items()
+                            if isinstance(v, str) and v in ("A", "B", "C", "D")
+                        }
             except (OSError, ValueError):
                 pass
 
     # Fallback: match already-exported files by (size, duration).
-    by_sig: dict[tuple[int, float], list[str]] = {}
+    by_sig: dict[tuple[int, float], list[tuple[str, str | None]]] = {}
     for track_dir in track_dirs:
         if not track_dir.is_dir():
             continue
-        pat = re.compile(rf"^{re.escape(base_id)}_([A-Z0-9]+)_\d+\.{re.escape(ext)}$", re.I)
+        pat = re.compile(rf"^{re.escape(base_id)}_([A-Z0-9]+)(?:_([A-D]))?_\d+\.{re.escape(ext)}$", re.I)
         for f in sorted(track_dir.glob(f"{base_id}_*_*.{ext}")):
             m = pat.match(f.name)
             if not m:
                 continue
             tag = m.group(1).upper()
+            subgroup = m.group(2).upper() if m.group(2) else None
             if ext.lower() == "wav":
                 _, dur = _probe_wav(f)
             elif ext.lower() in ("opus", "ogg"):
                 _, dur = _probe_ogg_opus(f)
             else:
                 dur = 0.0
-            by_sig.setdefault((f.stat().st_size, dur), []).append(tag)
+            by_sig.setdefault((f.stat().st_size, dur), []).append((tag, subgroup))
 
     for t in tracks:
         tag = saved_map.get(t["name"])
+        subgroup = saved_subgroups.get(t["name"])
         if not tag:
             candidates = by_sig.get((t.get("size", 0), t.get("duration", 0.0)))
             if candidates:
-                tag = candidates.pop(0)
+                tag, fallback_subgroup = candidates.pop(0)
+                if subgroup is None:
+                    subgroup = fallback_subgroup
         if tag:
             t["tag"] = tag
+        if subgroup:
+            t["subgroup"] = subgroup
     return display_name
 
 

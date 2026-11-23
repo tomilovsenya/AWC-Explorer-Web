@@ -20,6 +20,7 @@ const autoNextEl = document.getElementById('autoNext');
 const loopFadeEl = document.getElementById('loopFade');
 
 const ROLE_TAGS = ['INTRO', 'OUTRO', 'PAD', 'PERC', 'LEAD', 'BASS', 'DRUMS', 'SYNTH', 'OTHER', 'CALM'];
+const TRACK_GROUPS = ['A', 'B', 'C', 'D'];
 
 const player = new Audio();
 player.preload = 'metadata';
@@ -146,6 +147,11 @@ function getCategoryOrder(track) {
   return idx >= 0 ? idx : 999;
 }
 
+function getTrackGroupOrder(track) {
+  const idx = TRACK_GROUPS.indexOf(track.subgroup);
+  return idx >= 0 ? idx : TRACK_GROUPS.length;
+}
+
 function recomputeGroupDraftNames(tracks) {
   const counts = new Map();
   tracks.forEach(t => {
@@ -153,28 +159,33 @@ function recomputeGroupDraftNames(tracks) {
       t.draftName = t.name;
       return;
     }
-    const nextNum = (counts.get(t.tag) || 0) + 1;
-    counts.set(t.tag, nextNum);
+    const subgroup = TRACK_GROUPS.includes(t.subgroup) ? t.subgroup : '';
+    const countKey = `${t.tag}:${subgroup}`;
+    const nextNum = (counts.get(countKey) || 0) + 1;
+    counts.set(countKey, nextNum);
 
     const dot = t.name.lastIndexOf('.');
     const ext = dot >= 0 ? t.name.slice(dot) : '';
     const idMatch = t.name.match(/^(\d+)/);
     const prefix = idMatch ? idMatch[1] : (t.folder || 'TRACK');
-    t.draftName = `${prefix}_${t.tag}_${nextNum}${ext}`;
+    const subgroupPart = subgroup ? `_${subgroup}` : '';
+    t.draftName = `${prefix}_${t.tag}${subgroupPart}_${nextNum}${ext}`;
   });
 }
 
 function persistGroupLabels(folderId, tracks, displayName) {
   const labels = {};
+  const subgroups = {};
   tracks.forEach(t => {
     if (t.tag) labels[t.name] = t.tag;
+    if (TRACK_GROUPS.includes(t.subgroup)) subgroups[t.name] = t.subgroup;
   });
   const previousSave = metadataSaveQueues.get(folderId) || Promise.resolve();
   const save = previousSave.catch(() => {}).then(async () => {
     const response = await fetch('/save_labels', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folder: folderId, display_name: displayName, labels })
+      body: JSON.stringify({ folder: folderId, display_name: displayName, labels, subgroups })
     });
     if (!response.ok) throw new Error(`Metadata save failed (${response.status})`);
   });
@@ -205,6 +216,12 @@ function updateGroupRowsDOM(tbody, tracks) {
     }
     tr.querySelectorAll('.tag-pill').forEach(pill => {
       pill.classList.toggle('active', pill.dataset.tag === t.tag);
+    });
+    tr.querySelectorAll('.subgroup-pill').forEach(pill => {
+      const active = pill.dataset.subgroup === t.subgroup;
+      pill.disabled = !t.tag;
+      pill.classList.toggle('active', active);
+      pill.setAttribute('aria-pressed', String(active));
     });
   });
 
@@ -665,9 +682,16 @@ function buildRowsHtml(tracks) {
       const active = t.tag === tag ? ' active' : '';
       return `<button type="button" class="tag-pill tag-color-${tag.toLowerCase()}${active}" data-source="${t.name}" data-tag="${tag}" title="Shortcut: ${i}">${i}:${tag}</button>`;
     }).join('');
+    const subgroupPills = TRACK_GROUPS.map(letter => {
+      const active = t.subgroup === letter ? ' active' : '';
+      const disabled = t.tag ? '' : ' disabled';
+      const title = t.tag ? `Similarity group ${letter} (click again to clear)` : 'Choose a category first';
+      return `<button type="button" class="subgroup-pill${active}" data-source="${t.name}" data-subgroup="${letter}" aria-pressed="${t.subgroup === letter}" title="${title}"${disabled}>${letter}</button>`;
+    }).join('');
     return `<tr data-folder="${t.folder}" data-source="${t.name}" class="${isPlaying ? 'playing-row' : ''}">
       <td><code class="track-label">${displayName}</code></td>
       <td><span class="tag-pills">${pills}</span></td>
+      <td><span class="subgroup-pills">${subgroupPills}</span></td>
       <td>${t.channels === 2 ? 'Stereo' : 'Mono'}</td>
       <td>${t.duration}s</td>
       <td>${formatBytes(t.size)}</td>
@@ -723,6 +747,7 @@ function renderGroup(data) {
         <tr>
           <th class="sortable" data-sort="path">Output Path<span class="arrow">▲</span></th>
           <th class="sortable" data-sort="category">Category<span class="arrow"></span></th>
+          <th>Group</th>
           <th>Channels</th>
           <th class="sortable" data-sort="duration">Duration<span class="arrow"></span></th>
           <th class="sortable" data-sort="size">Size<span class="arrow"></span></th>
@@ -753,6 +778,9 @@ function renderGroup(data) {
         const cA = getCategoryOrder(a);
         const cB = getCategoryOrder(b);
         if (cA !== cB) return sortAsc ? (cA - cB) : (cB - cA);
+        const gA = getTrackGroupOrder(a);
+        const gB = getTrackGroupOrder(b);
+        if (gA !== gB) return sortAsc ? (gA - gB) : (gB - gA);
       }
       if (sortKey === 'duration') return sortAsc ? (a.duration - b.duration) : (b.duration - a.duration);
       if (sortKey === 'size') return sortAsc ? ((a.size || 0) - (b.size || 0)) : ((b.size || 0) - (a.size || 0));
@@ -801,6 +829,19 @@ function renderGroup(data) {
     if (pill) {
       const track = data.tracks.find(t => t.name === pill.dataset.source);
       if (track) applyLabelAndAdvance(data.id, data.tracks, track, pill.dataset.tag, tbody);
+      return;
+    }
+    const subgroupPill = e.target.closest('.subgroup-pill');
+    if (subgroupPill) {
+      const track = data.tracks.find(t => t.name === subgroupPill.dataset.source);
+      if (track?.tag) {
+        track.subgroup = track.subgroup === subgroupPill.dataset.subgroup ? null : subgroupPill.dataset.subgroup;
+        recomputeGroupDraftNames(data.tracks);
+        if (sortKey === 'category') sortTracksByKey('category', false);
+        updateGroupRowsDOM(tbody, data.tracks);
+        persistGroupLabels(data.id, data.tracks, tbody._groupDisplayName)
+          .catch(error => { statusEl.textContent = `Unable to save labels: ${error.message}`; });
+      }
       return;
     }
     const row = e.target.closest('tr');

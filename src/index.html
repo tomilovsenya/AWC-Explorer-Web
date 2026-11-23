@@ -79,6 +79,11 @@
   .pb-time { font-variant-numeric: tabular-nums; font-size: 0.85rem; color: var(--muted); min-width: 95px; text-align: right; }
   .tag-pills { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
   .tag-pill { padding: 2px 6px; font-size: 0.72rem; border-radius: 5px; transition: opacity 0.12s, box-shadow 0.12s, transform 0.12s; }
+  .subgroup-pills { display: inline-flex; gap: 4px; }
+  .subgroup-pill { padding: 2px 6px; font-size: 0.72rem; border-radius: 5px; color: var(--muted); background: #23283b; border: 1px solid #323952; }
+  .subgroup-pill:not(.active):not(:disabled) { opacity: 0.6; }
+  .subgroup-pill.active { color: #fff; background: var(--accent2); border-color: var(--accent2); font-weight: 700; }
+  .subgroup-pill:disabled { cursor: not-allowed; opacity: 0.25; }
   .tag-pill { color: var(--category-color, #cbd5e1); background: var(--category-bg, #23283b); border: 1px solid var(--category-border, #323952); }
   .tag-pill:not(.active) { opacity: 0.5; }
   .tag-pill:not(.active):hover, .tag-pill:not(.active):focus { opacity: 0.85; }
