@@ -702,12 +702,13 @@ async function handleFiles(fileList) {
   const files = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.awc'));
   if (!files.length) return;
   const fmt = document.getElementById('fmt').value;
+  let duplicateCount = 0;
   for (const file of files) {
     statusEl.textContent = `Checking cache for ${file.name}...`;
     const checkRes = await fetch(`/check?name=${encodeURIComponent(file.name)}&fmt=${fmt}`);
     const checkData = await checkRes.json();
     if (checkData.cached) {
-      renderGroup(checkData);
+      if (renderGroup(checkData) === false) duplicateCount++;
       hidePlayerBarIfNoTables();
       continue;
     }
@@ -717,10 +718,12 @@ async function handleFiles(fileList) {
       method: 'POST',
       body: await file.arrayBuffer()
     });
-    renderGroup(await res.json());
+    if (renderGroup(await res.json()) === false) duplicateCount++;
     hidePlayerBarIfNoTables();
   }
-  statusEl.textContent = 'Done!';
+  statusEl.textContent = duplicateCount
+    ? `Done! Skipped ${duplicateCount} duplicate AWC table${duplicateCount === 1 ? '' : 's'}.`
+    : 'Done!';
   zipAllBtn.disabled = false;
 }
 
@@ -758,6 +761,16 @@ function buildRowsHtml(tracks) {
 }
 
 function renderGroup(data) {
+  if (data.id && !data.error) {
+    const existingGroup = Array.from(resultsEl.querySelectorAll('.group')).find(
+      group => group.querySelector('tbody')?._folderId === data.id
+    );
+    if (existingGroup) {
+      existingGroup.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return false;
+    }
+  }
+
   const div = document.createElement('div');
   div.className = 'group';
   div.id = `awc-group-${++groupNavCounter}`;
@@ -1041,6 +1054,7 @@ function renderGroup(data) {
       playTrack(remainingTracks[0].track);
     }
   });
+  return true;
 }
 
 function downloadAllZip() {
