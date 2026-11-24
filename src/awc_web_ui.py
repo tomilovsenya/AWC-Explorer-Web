@@ -241,7 +241,7 @@ class AWCHandler(BaseHTTPRequestHandler):
                         return
                     metadata["category"] = category
                 if subgroup is not None:
-                    if not isinstance(subgroup, str) or subgroup not in ("A", "B", "C", "D"):
+                    if not isinstance(subgroup, str) or subgroup not in ("A", "B", "C", "D", "E", "F", "G", "H"):
                         self.send_error(400, "Invalid track subgroup")
                         return
                     metadata["subgroup"] = subgroup

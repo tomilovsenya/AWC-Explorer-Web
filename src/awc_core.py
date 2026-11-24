@@ -244,7 +244,7 @@ def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: s
                         metadata = {}
                         if isinstance(category, str) and category:
                             metadata["category"] = category
-                        if isinstance(subgroup, str) and subgroup in ("A", "B", "C", "D"):
+                        if isinstance(subgroup, str) and subgroup in ("A", "B", "C", "D", "E", "F", "G", "H"):
                             metadata["subgroup"] = subgroup
                         if metadata:
                             candidate_tracks[str(name)] = metadata
@@ -260,7 +260,7 @@ def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: s
     for track_dir in track_dirs:
         if not track_dir.is_dir():
             continue
-        pat = re.compile(rf"^{re.escape(base_id)}_([A-Z0-9]+)(?:_([A-D]))?_\d+\.{re.escape(ext)}$", re.I)
+        pat = re.compile(rf"^{re.escape(base_id)}_([A-Z0-9]+)(?:_([A-H]))?_\d+\.{re.escape(ext)}$", re.I)
         for f in sorted(track_dir.glob(f"{base_id}_*_*.{ext}")):
             m = pat.match(f.name)
             if not m:

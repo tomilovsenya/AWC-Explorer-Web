@@ -110,6 +110,8 @@
   .subgroup-pill:not(.active):not(:disabled) { opacity: 0.6; }
   .subgroup-pill.active { color: #fff; background: var(--accent2); border-color: var(--accent2); font-weight: 700; }
   .subgroup-pill:disabled { cursor: not-allowed; opacity: 0.25; }
+  .subgroup-add-btn { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; color: var(--muted); background: transparent; border: 1px dashed #505b70; border-radius: 5px; }
+  .subgroup-add-btn:hover, .subgroup-add-btn:focus { color: var(--text); border-color: var(--accent); }
   .tag-pill { color: var(--category-color, #cbd5e1); background: var(--category-bg, #23283b); border: 1px solid var(--category-border, #323952); }
   .tag-pill:not(.active) { opacity: 0.5; }
   .tag-pill:not(.active):hover, .tag-pill:not(.active):focus { opacity: 0.85; }
@@ -191,6 +193,7 @@
     .tag-pill-compact { display: inline; }
     .subgroup-pills { gap: 2px; }
     .subgroup-pill { width: 24px; height: 28px; padding: 0; }
+    .subgroup-pills { max-width: 154px; flex-wrap: wrap; justify-content: flex-end; }
     #playerBar { flex-wrap: wrap; gap: 6px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); }
     .pb-info { flex: 1 1 auto; min-width: 0; max-width: none; }
     .pb-btns { flex: 0 0 auto; }

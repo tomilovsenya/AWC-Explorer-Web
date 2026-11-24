@@ -20,7 +20,8 @@ const autoNextEl = document.getElementById('autoNext');
 const loopFadeEl = document.getElementById('loopFade');
 
 const ROLE_TAGS = ['INTRO', 'OUTRO', 'PAD', 'PERC', 'LEAD', 'BASS', 'DRUMS', 'SYNTH', 'OTHER', 'CALM', 'JUNK'];
-const TRACK_GROUPS = ['A', 'B', 'C', 'D'];
+const TRACK_GROUPS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+const DEFAULT_TRACK_GROUPS = TRACK_GROUPS.slice(0, 4);
 
 const player = new Audio();
 player.preload = 'metadata';
@@ -157,6 +158,24 @@ function getTrackGroupOrder(track) {
   return idx >= 0 ? idx : TRACK_GROUPS.length;
 }
 
+function getAvailableTrackGroups(availableGroupsByCategory, category) {
+  const groupCount = availableGroupsByCategory?.get(category) || DEFAULT_TRACK_GROUPS.length;
+  return TRACK_GROUPS.slice(0, groupCount);
+}
+
+function updateAvailableTrackGroupsByCategory(availableGroupsByCategory, tracks) {
+  tracks.forEach(track => {
+    if (!track.tag || track.tag === 'JUNK') return;
+    const subgroupIndex = TRACK_GROUPS.indexOf(track.subgroup);
+    if (subgroupIndex < DEFAULT_TRACK_GROUPS.length) return;
+    const groupCount = Math.max(
+      availableGroupsByCategory.get(track.tag) || DEFAULT_TRACK_GROUPS.length,
+      subgroupIndex + 1
+    );
+    availableGroupsByCategory.set(track.tag, groupCount);
+  });
+}
+
 function recomputeGroupDraftNames(tracks) {
   const counts = new Map();
   tracks.forEach(t => {
@@ -209,33 +228,12 @@ function syncRowHighlight() {
 
 function updateGroupRowsDOM(tbody, tracks) {
   const byName = new Map(tracks.map(t => [t.name, t]));
-  tbody.querySelectorAll('tr').forEach(tr => {
-    const t = byName.get(tr.dataset.source);
-    if (!t) return;
-    const downloadName = t.draftName || t.name;
-    const displayName = getTrackDisplayName(downloadName);
-    const labelEl = tr.querySelector('.track-label');
-    if (labelEl && labelEl.textContent !== displayName) {
-      labelEl.textContent = displayName;
-    }
-    const dlEl = tr.querySelector('a.dl');
-    if (dlEl) {
-      dlEl.setAttribute('download', downloadName);
-      dlEl.setAttribute('aria-label', `Download ${downloadName}`);
-      dlEl.setAttribute('title', `Download ${downloadName}`);
-    }
-    tr.querySelectorAll('.tag-pill').forEach(pill => {
-      pill.classList.toggle('active', pill.dataset.tag === t.tag);
-    });
-    const subgroupPills = tr.querySelector('.subgroup-pills');
-    if (subgroupPills) subgroupPills.hidden = t.tag === 'JUNK';
-    tr.querySelectorAll('.subgroup-pill').forEach(pill => {
-      const active = pill.dataset.subgroup === t.subgroup;
-      pill.disabled = !t.tag || t.tag === 'JUNK';
-      pill.classList.toggle('active', active);
-      pill.setAttribute('aria-pressed', String(active));
-    });
-  });
+  const availableGroupsByCategory = tbody._availableTrackGroupsByCategory;
+  updateAvailableTrackGroupsByCategory(availableGroupsByCategory, tracks);
+  tbody.innerHTML = buildRowsHtml(
+    tbody._visibleTracks || tracks,
+    availableGroupsByCategory
+  );
 
   if (activeTrack && byName.has(activeTrack.name)) {
     pbTitle.textContent = getTrackDisplayName(activeTrack.draftName || activeTrack.name);
@@ -243,7 +241,11 @@ function updateGroupRowsDOM(tbody, tracks) {
 }
 
 function applyTrackSubgroup(folderId, tracks, track, subgroup, tbody, toggleSelection = false) {
-  if (!track?.tag || track.tag === 'JUNK' || !TRACK_GROUPS.includes(subgroup)) return;
+  const availableGroups = getAvailableTrackGroups(
+    tbody?._availableTrackGroupsByCategory,
+    track?.tag
+  );
+  if (!track?.tag || track.tag === 'JUNK' || !availableGroups.includes(subgroup)) return;
   const previousSubgroup = track.subgroup;
   const clearing = toggleSelection && previousSubgroup === subgroup;
   const nextSubgroup = clearing ? null : subgroup;
@@ -658,7 +660,11 @@ window.addEventListener('keydown', e => {
       const tbody = Array.from(document.querySelectorAll('.group tbody')).find(tb => tb._folderId === activeTrack.folder);
       const tracks = tbody?._tracks;
       const track = tracks?.find(t => t.name === activeTrack.name);
-      if (track?.tag && track.tag !== 'JUNK') {
+      const availableGroups = getAvailableTrackGroups(
+        tbody?._availableTrackGroupsByCategory,
+        track?.tag
+      );
+      if (availableGroups.includes(subgroup) && track?.tag && track.tag !== 'JUNK') {
         e.preventDefault();
         applyTrackSubgroup(tbody._folderId, tracks, track, subgroup, tbody, true);
       }
@@ -727,7 +733,8 @@ async function handleFiles(fileList) {
   zipAllBtn.disabled = false;
 }
 
-function buildRowsHtml(tracks) {
+function buildRowsHtml(tracks, availableGroupsByCategory) {
+  const addGroupButtonShownFor = new Set();
   return tracks.map(t => {
     const url = getTrackUrl(t);
     const downloadName = t.draftName || t.name;
@@ -740,7 +747,8 @@ function buildRowsHtml(tracks) {
       const compactLabel = i < 10 ? i : 'J';
       return `<button type="button" class="tag-pill tag-color-${tag.toLowerCase()}${active}" data-source="${t.name}" data-tag="${tag}" aria-label="Set ${tag} category" title="${title}"><span class="tag-pill-full">${shortcut}${tag}</span><span class="tag-pill-compact" aria-hidden="true">${compactLabel}</span></button>`;
     }).join('');
-    const subgroupPills = TRACK_GROUPS.map(letter => {
+    const availableGroups = getAvailableTrackGroups(availableGroupsByCategory, t.tag);
+    const subgroupPills = availableGroups.map(letter => {
       const active = t.subgroup === letter ? ' active' : '';
       const disabled = t.tag && t.tag !== 'JUNK' ? '' : ' disabled';
       const title = t.tag && t.tag !== 'JUNK'
@@ -748,11 +756,17 @@ function buildRowsHtml(tracks) {
         : 'Choose a non-JUNK category first';
       return `<button type="button" class="subgroup-pill${active}" data-source="${t.name}" data-subgroup="${letter}" aria-label="Similarity group ${letter}" aria-pressed="${t.subgroup === letter}" aria-keyshortcuts="${letter}" title="${title}"${disabled}>${letter}</button>`;
     }).join('');
+    const showAddGroupButton = t.tag && t.tag !== 'JUNK' && !addGroupButtonShownFor.has(t.tag);
+    if (showAddGroupButton) addGroupButtonShownFor.add(t.tag);
+    const nextGroup = TRACK_GROUPS[availableGroups.length];
+    const addGroupButton = showAddGroupButton && nextGroup
+      ? `<button type="button" class="subgroup-add-btn" data-category="${escapeHtml(t.tag)}" aria-label="Add similarity group ${nextGroup} for ${escapeHtml(t.tag)}" title="Add similarity group ${nextGroup} for ${escapeHtml(t.tag)}">+</button>`
+      : '';
     const subgroupHidden = t.tag === 'JUNK' ? ' hidden' : '';
     return `<tr data-folder="${t.folder}" data-source="${t.name}" class="${isPlaying ? 'playing-row' : ''}">
       <td class="track-name-cell"><code class="track-label">${displayName}</code></td>
       <td class="category-cell"><span class="tag-pills">${pills}</span></td>
-      <td class="group-cell"><span class="subgroup-pills"${subgroupHidden}>${subgroupPills}</span></td>
+      <td class="group-cell"><span class="subgroup-pills"${subgroupHidden}>${subgroupPills}${addGroupButton}</span></td>
       <td class="duration-cell"><span class="mobile-cell-label">Duration: </span>${t.duration}s</td>
       <td class="size-cell"><span class="mobile-cell-label">Size: </span>${formatBytes(t.size)}</td>
       <td class="file-cell"><a class="dl track-download" href="${url}" download="${escapeHtml(downloadName)}" aria-label="Download ${escapeHtml(downloadName)}" title="Download ${escapeHtml(downloadName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 20h16"/></svg></a></td>
@@ -783,6 +797,8 @@ function renderGroup(data) {
 
   data.display_name = data.display_name || data.file;
   recomputeGroupDraftNames(data.tracks);
+  const availableGroupsByCategory = new Map();
+  updateAvailableTrackGroupsByCategory(availableGroupsByCategory, data.tracks);
 
   let sortKey = 'path';
   let sortAsc = true;
@@ -854,7 +870,7 @@ function renderGroup(data) {
           <th>Download</th>
         </tr>
       </thead>
-      <tbody>${buildRowsHtml(visibleTracks)}</tbody>
+      <tbody>${buildRowsHtml(visibleTracks, availableGroupsByCategory)}</tbody>
     </table>`;
 
   updateGroupProgress(div, data.tracks);
@@ -900,7 +916,8 @@ function renderGroup(data) {
       return sortAsc ? pA.localeCompare(pB, undefined, { numeric: true }) : pB.localeCompare(pA, undefined, { numeric: true });
     });
     tbody._visibleTracks = visibleTracks;
-    tbody.innerHTML = buildRowsHtml(visibleTracks);
+    updateAvailableTrackGroupsByCategory(availableGroupsByCategory, data.tracks);
+    tbody.innerHTML = buildRowsHtml(visibleTracks, availableGroupsByCategory);
     updateMobileSortControls();
   }
 
@@ -911,6 +928,7 @@ function renderGroup(data) {
   tbody._folderId = data.id;
   tbody._groupDisplayName = data.display_name;
   tbody._tracks = data.tracks;
+  tbody._availableTrackGroupsByCategory = availableGroupsByCategory;
   tbody._visibleTracks = visibleTracks;
   tbody._sortByCategory = () => {
     if (sortKey !== 'category') return false;
@@ -941,6 +959,16 @@ function renderGroup(data) {
 
   tbody.addEventListener('click', e => {
     if (e.target.closest('a.dl')) return;
+    const addGroupButton = e.target.closest('.subgroup-add-btn');
+    if (addGroupButton) {
+      const category = addGroupButton.dataset.category;
+      const groupCount = availableGroupsByCategory.get(category) || DEFAULT_TRACK_GROUPS.length;
+      if (groupCount < TRACK_GROUPS.length) {
+        availableGroupsByCategory.set(category, groupCount + 1);
+        tbody.innerHTML = buildRowsHtml(tbody._visibleTracks || data.tracks, availableGroupsByCategory);
+      }
+      return;
+    }
     const pill = e.target.closest('.tag-pill');
     if (pill) {
       const track = data.tracks.find(t => t.name === pill.dataset.source);

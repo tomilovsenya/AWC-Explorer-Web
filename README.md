@@ -17,8 +17,8 @@ A fast, multi-core `.awc` (Audio Wave Container) extractor and browser-based aud
   * 60–144 FPS `<canvas>` amplitude waveform seekbar with click-and-drag scrubbing.
   * **Loop X-Fade:** Seamless equal-power 3% crossfade looping powered by the Web Audio API.
   * **Single Playback & Auto-Next:** Prevents overlapping playback and, when enabled, advances to the next table track after category assignment or subgroup assignment, change, or clearing, using the prior table order.
-  * **Keyboard Shortcuts:** `Space` to Play/Pause, `↑` / `↓` to step tracks, `0`–`9` to set categories, and `A`–`D` to assign pattern groups.
-* **Editable AWC Names & Track Labels:** Rename each imported AWC in its tracklist; `labels.json` stores each original track filename once with its category and optional A–D pattern group. Group letters appear in renamed tracks and sort within each category. Use **JUNK** for broken files; it has no pattern groups. Narrow layouts use compact category keys with an expandable legend, track sort controls, and truncated long names. Track names omit file extensions, shown once as the AWC format.
+  * **Keyboard Shortcuts:** `Space` to Play/Pause, `↑` / `↓` to step tracks, `0`–`9` to set categories, and `A`–`D` to assign pattern groups. Use `+` in a category to reveal additional groups through `H`.
+* **Editable AWC Names & Track Labels:** Rename each imported AWC in its tracklist; `labels.json` stores each original track filename once with its category and optional A–H pattern group. Groups A–D are shown by default; use `+` to reveal E–H for a category as needed. Group letters appear in renamed tracks and sort within each category. Use **JUNK** for broken files; it has no pattern groups. Narrow layouts use compact category keys with an expandable legend, track sort controls, and truncated long names. Track names omit file extensions, shown once as the AWC format.
 * **Sortable Tracklists & Batch ZIPs:** Sort streams by **Output Path**, **Category**, **Duration**, or **File Size**, save labeled tracks to `TRACK_<ID> - <Name>/`, and download individual `<ID>.zip` archives or all extracted folders at once.
 
 ---
