@@ -52,6 +52,10 @@ function formatBytes(bytes) {
   return `${(bytes / 1048576).toFixed(2)} MB`;
 }
 
+function getTrackDisplayName(filename) {
+  return filename.replace(/\.[^.]+$/, '');
+}
+
 function updateGroupProgress(group, tracks) {
   if (!group) return;
   const progress = group.querySelector('.group-progress-bar');
@@ -208,14 +212,17 @@ function updateGroupRowsDOM(tbody, tracks) {
   tbody.querySelectorAll('tr').forEach(tr => {
     const t = byName.get(tr.dataset.source);
     if (!t) return;
-    const displayName = t.draftName || t.name;
+    const downloadName = t.draftName || t.name;
+    const displayName = getTrackDisplayName(downloadName);
     const labelEl = tr.querySelector('.track-label');
     if (labelEl && labelEl.textContent !== displayName) {
       labelEl.textContent = displayName;
     }
     const dlEl = tr.querySelector('a.dl');
     if (dlEl) {
-      dlEl.setAttribute('download', displayName);
+      dlEl.setAttribute('download', downloadName);
+      dlEl.setAttribute('aria-label', `Download ${downloadName}`);
+      dlEl.setAttribute('title', `Download ${downloadName}`);
     }
     tr.querySelectorAll('.tag-pill').forEach(pill => {
       pill.classList.toggle('active', pill.dataset.tag === t.tag);
@@ -231,7 +238,7 @@ function updateGroupRowsDOM(tbody, tracks) {
   });
 
   if (activeTrack && byName.has(activeTrack.name)) {
-    pbTitle.textContent = activeTrack.draftName || activeTrack.name;
+    pbTitle.textContent = getTrackDisplayName(activeTrack.draftName || activeTrack.name);
   }
 }
 
@@ -502,7 +509,7 @@ function selectTrack(track) {
   playerBar.classList.remove('hidden');
   syncRowHighlight();
 
-  pbTitle.textContent = track.draftName || track.name;
+  pbTitle.textContent = getTrackDisplayName(track.draftName || track.name);
   pbSub.textContent = track.channels === 2 ? 'Stereo' : 'Mono';
   player.src = url;
   player.currentTime = 0;
@@ -720,13 +727,15 @@ async function handleFiles(fileList) {
 function buildRowsHtml(tracks) {
   return tracks.map(t => {
     const url = getTrackUrl(t);
-    const displayName = t.draftName || t.name;
+    const downloadName = t.draftName || t.name;
+    const displayName = getTrackDisplayName(downloadName);
     const isPlaying = activeTrack && activeTrack.folder === t.folder && activeTrack.name === t.name;
     const pills = ROLE_TAGS.map((tag, i) => {
       const active = t.tag === tag ? ' active' : '';
       const shortcut = i < 10 ? `${i}:` : '';
       const title = i < 10 ? `Shortcut: ${i}` : 'Broken or junk track';
-      return `<button type="button" class="tag-pill tag-color-${tag.toLowerCase()}${active}" data-source="${t.name}" data-tag="${tag}" title="${title}">${shortcut}${tag}</button>`;
+      const compactLabel = i < 10 ? i : 'J';
+      return `<button type="button" class="tag-pill tag-color-${tag.toLowerCase()}${active}" data-source="${t.name}" data-tag="${tag}" aria-label="Set ${tag} category" title="${title}"><span class="tag-pill-full">${shortcut}${tag}</span><span class="tag-pill-compact" aria-hidden="true">${compactLabel}</span></button>`;
     }).join('');
     const subgroupPills = TRACK_GROUPS.map(letter => {
       const active = t.subgroup === letter ? ' active' : '';
@@ -734,16 +743,16 @@ function buildRowsHtml(tracks) {
       const title = t.tag && t.tag !== 'JUNK'
         ? `Similarity group ${letter} (shortcut: ${letter}; press or click again to clear)`
         : 'Choose a non-JUNK category first';
-      return `<button type="button" class="subgroup-pill${active}" data-source="${t.name}" data-subgroup="${letter}" aria-pressed="${t.subgroup === letter}" aria-keyshortcuts="${letter}" title="${title}"${disabled}>${letter}</button>`;
+      return `<button type="button" class="subgroup-pill${active}" data-source="${t.name}" data-subgroup="${letter}" aria-label="Similarity group ${letter}" aria-pressed="${t.subgroup === letter}" aria-keyshortcuts="${letter}" title="${title}"${disabled}>${letter}</button>`;
     }).join('');
     const subgroupHidden = t.tag === 'JUNK' ? ' hidden' : '';
     return `<tr data-folder="${t.folder}" data-source="${t.name}" class="${isPlaying ? 'playing-row' : ''}">
-      <td><code class="track-label">${displayName}</code></td>
-      <td><span class="tag-pills">${pills}</span></td>
-      <td><span class="subgroup-pills"${subgroupHidden}>${subgroupPills}</span></td>
-      <td>${t.duration}s</td>
-      <td>${formatBytes(t.size)}</td>
-      <td><a class="dl" href="${url}" download="${displayName}">Download</a></td>
+      <td class="track-name-cell"><code class="track-label">${displayName}</code></td>
+      <td class="category-cell"><span class="tag-pills">${pills}</span></td>
+      <td class="group-cell"><span class="subgroup-pills"${subgroupHidden}>${subgroupPills}</span></td>
+      <td class="duration-cell"><span class="mobile-cell-label">Duration: </span>${t.duration}s</td>
+      <td class="size-cell"><span class="mobile-cell-label">Size: </span>${formatBytes(t.size)}</td>
+      <td class="file-cell"><a class="dl track-download" href="${url}" download="${escapeHtml(downloadName)}" aria-label="Download ${escapeHtml(downloadName)}" title="Download ${escapeHtml(downloadName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 20h16"/></svg></a></td>
     </tr>`;
   }).join('');
 }
@@ -768,6 +777,14 @@ function renderGroup(data) {
   const totalBytes = data.tracks.reduce((sum, t) => sum + (t.size || 0), 0);
   const cacheBadge = data.cached ? `<span class="badge" style="color:#4ade80;">Cached</span>` : '';
   const originalNameBadge = `<span class="badge original-awc-name"${data.display_name === data.file ? ' hidden' : ''}>Original AWC: ${escapeHtml(data.file)}</span>`;
+  const formatMatch = data.tracks[0]?.name.match(/\.([^.]+)$/);
+  const formatBadge = formatMatch
+    ? `<span class="badge">Format: ${escapeHtml(formatMatch[1].toUpperCase())}</span>`
+    : '';
+  const mobileCategoryLegend = ROLE_TAGS.map((tag, index) => {
+    const key = index < 10 ? index : 'J';
+    return `<span class="mobile-category-key tag-color-${tag.toLowerCase()}"><kbd>${key}</kbd>${tag}</span>`;
+  }).join('');
 
   div.innerHTML = `
     <div class="group-header">
@@ -776,19 +793,42 @@ function renderGroup(data) {
         <div class="group-meta">
           <span class="badge">Folder: output/${data.id}/</span>
           ${originalNameBadge}
+          ${formatBadge}
           <span class="badge">${formatBytes(totalBytes)}</span>
           <span class="badge">${data.tracks.length} streams</span>
           ${cacheBadge}
         </div>
       </div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <button type="button" class="secondary close-table-btn">Close</button>
-        <button type="button" class="secondary save-sorted-btn" title="Saves labeled tracks to a folder named with this AWC name">Save Sorted (TRACK_${data.id})</button>
-        <button type="button" class="secondary save-track-btn">Save All (TRACK_${data.id})</button>
-        <a class="dl" href="/zip/${encodeURIComponent(data.id)}">Download ${data.id}.zip</a>
+      <div class="group-actions">
+        <button type="button" class="secondary group-action-btn close-table-btn" aria-label="Close AWC table" title="Close table">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+        <button type="button" class="secondary group-action-btn save-sorted-btn" aria-label="Save categorized tracks" title="Save labeled tracks to TRACK_${data.id} - ${escapeHtml(data.display_name)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 10h10M4 15h7M17 13v7m-3-3 3 3 3-3"/></svg>
+        </button>
+        <button type="button" class="secondary group-action-btn save-track-btn" aria-label="Save all tracks" title="Save all tracks to TRACK_${data.id}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h12l3 3v15H4V3h1ZM8 3v6h8V3M8 21v-8h8v8"/></svg>
+        </button>
+        <a class="dl group-action-btn group-action-link" href="/zip/${encodeURIComponent(data.id)}" aria-label="Download ${data.id}.zip" title="Download ${data.id}.zip">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 20h16"/></svg>
+        </a>
       </div>
       <div class="group-progress group-progress-bar" role="progressbar" aria-label="Track category distribution" aria-valuemin="0"></div>
       <div class="group-progress-labels" aria-label="Categories requiring more label space" hidden></div>
+      <details class="mobile-category-legend">
+        <summary>Category key</summary>
+        <div class="mobile-category-legend-items">${mobileCategoryLegend}</div>
+      </details>
+    </div>
+    <div class="mobile-sort-controls">
+      <label for="${div.id}-sort-key">Sort:</label>
+      <select id="${div.id}-sort-key" class="mobile-sort-key" aria-label="Sort tracks by">
+        <option value="path">Output Path</option>
+        <option value="category">Category</option>
+        <option value="duration">Duration</option>
+        <option value="size">Size</option>
+      </select>
+      <button type="button" class="mobile-sort-direction" aria-label="Reverse sort direction">Asc ↑</button>
     </div>
     <table>
       <thead>
@@ -798,7 +838,7 @@ function renderGroup(data) {
           <th>Group</th>
           <th class="sortable" data-sort="duration">Duration<span class="arrow"></span></th>
           <th class="sortable" data-sort="size">Size<span class="arrow"></span></th>
-          <th>File</th>
+          <th>Download</th>
         </tr>
       </thead>
       <tbody>${buildRowsHtml(visibleTracks)}</tbody>
@@ -812,6 +852,17 @@ function renderGroup(data) {
   const saveBtn = div.querySelector('.save-track-btn');
   const progress = div.querySelector('.group-progress-bar');
   const headers = div.querySelectorAll('th.sortable');
+  const mobileSortSelect = div.querySelector('.mobile-sort-key');
+  const mobileSortDirection = div.querySelector('.mobile-sort-direction');
+
+  function updateMobileSortControls() {
+    mobileSortSelect.value = sortKey;
+    mobileSortDirection.textContent = sortAsc ? 'Asc ↑' : 'Desc ↓';
+    mobileSortDirection.setAttribute(
+      'aria-label',
+      `${sortAsc ? 'Ascending' : 'Descending'} sort order; activate to reverse`
+    );
+  }
 
   function sortTracksByKey(key, toggleDirection) {
     sortAsc = toggleDirection ? ((sortKey === key) ? !sortAsc : (key === 'path' || key === 'category')) : sortAsc;
@@ -837,7 +888,12 @@ function renderGroup(data) {
     });
     tbody._visibleTracks = visibleTracks;
     tbody.innerHTML = buildRowsHtml(visibleTracks);
+    updateMobileSortControls();
   }
+
+  mobileSortSelect.addEventListener('change', () => sortTracksByKey(mobileSortSelect.value, true));
+  mobileSortDirection.addEventListener('click', () => sortTracksByKey(sortKey, true));
+  updateMobileSortControls();
 
   tbody._folderId = data.id;
   tbody._groupDisplayName = data.display_name;
