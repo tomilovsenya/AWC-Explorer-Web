@@ -4,12 +4,13 @@ import json
 import logging
 from pathlib import Path
 import re
+import subprocess
 from threading import Lock
 import urllib.parse
 import webbrowser
 import zipfile
 
-from awc_core import get_base_id, get_cached_awc, process_awc_bytes
+from awc_core import convert_audio_bytes, get_base_id, get_cached_awc, process_awc_bytes
 
 PORT = 8765
 BASE_DIR = Path(__file__).resolve().parent
@@ -171,6 +172,57 @@ class AWCHandler(BaseHTTPRequestHandler):
                         self.wfile.write(data)
                     return
             self.send_error(404)
+
+        elif path.startswith("/export_file/"):
+            parts = path[len("/export_file/"):].split("/", 1)
+            if len(parts) != 2:
+                self.send_error(404)
+                return
+
+            folder, fname = (urllib.parse.unquote(part) for part in parts)
+            fmt = dict(urllib.parse.parse_qsl(parsed.query)).get("fmt", "")
+            src_dir = (WORK_DIR / folder).resolve()
+            source_file = (src_dir / fname).resolve()
+            if WORK_DIR.resolve() not in src_dir.parents or source_file.parent != src_dir or not source_file.is_file():
+                self.send_error(404)
+                return
+            if fmt not in ("opus", "ogg", "wav", "flac"):
+                self.send_error(400, "Invalid export format")
+                return
+
+            try:
+                data = convert_audio_bytes(source_file.read_bytes(), source_file.suffix.lstrip("."), fmt)
+            except ValueError as error:
+                self.send_error(400, str(error))
+                return
+            except FileNotFoundError as error:
+                if error.filename == "ffmpeg":
+                    self.send_error(500, "FFmpeg is required to convert this track")
+                else:
+                    logging.exception("Unable to read export source %s", source_file)
+                    self.send_error(500, "Unable to read export source")
+                return
+            except subprocess.CalledProcessError as error:
+                message = error.stderr.decode("utf-8", errors="replace").strip()
+                logging.error("Unable to convert %s to %s: %s", source_file, fmt, message)
+                self.send_error(500, "Audio conversion failed")
+                return
+            except OSError:
+                logging.exception("Unable to export %s", source_file)
+                self.send_error(500, "Audio export failed")
+                return
+
+            content_types = {
+                "opus": "audio/ogg; codecs=opus",
+                "ogg": "audio/ogg; codecs=opus",
+                "wav": "audio/wav",
+                "flac": "audio/flac",
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", content_types[fmt])
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         elif path.startswith("/zip/") or path == "/zip_all":
             buf = io.BytesIO()

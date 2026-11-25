@@ -1,7 +1,7 @@
 const fileInput = document.getElementById('fileInput');
 const statusEl = document.getElementById('status');
 const resultsEl = document.getElementById('results');
-const zipAllBtn = document.getElementById('zipAllBtn');
+const exportAllBtn = document.getElementById('exportAllBtn');
 const groupNavEl = document.getElementById('groupNav');
 const autoPlayOnLabelEl = document.getElementById('autoPlayOnLabel');
 const autoResortOnLabelEl = document.getElementById('autoResortOnLabel');
@@ -119,6 +119,7 @@ function getTrackUrl(track) {
 
 function refreshGroupNavigation() {
   const groups = Array.from(resultsEl.querySelectorAll('.group')).filter(group => group.querySelector('table'));
+  exportAllBtn.disabled = groups.length === 0;
   groupNavEl.replaceChildren();
   groupNavEl.hidden = groups.length < 2;
   document.body.classList.toggle('has-group-nav', groups.length >= 2);
@@ -707,11 +708,11 @@ fileInput.addEventListener('change', e => handleFiles(e.target.files));
 async function handleFiles(fileList) {
   const files = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.awc'));
   if (!files.length) return;
-  const fmt = document.getElementById('fmt').value;
+  const importFormat = 'opus';
   let duplicateCount = 0;
   for (const file of files) {
     statusEl.textContent = `Checking cache for ${file.name}...`;
-    const checkRes = await fetch(`/check?name=${encodeURIComponent(file.name)}&fmt=${fmt}`);
+    const checkRes = await fetch(`/check?name=${encodeURIComponent(file.name)}&fmt=${importFormat}`);
     const checkData = await checkRes.json();
     if (checkData.cached) {
       if (renderGroup(checkData) === false) duplicateCount++;
@@ -720,7 +721,7 @@ async function handleFiles(fileList) {
     }
 
     statusEl.textContent = `Decoding ${file.name} (${(file.size / 1048576).toFixed(2)} MB)...`;
-    const res = await fetch(`/upload?name=${encodeURIComponent(file.name)}&fmt=${fmt}`, {
+    const res = await fetch(`/upload?name=${encodeURIComponent(file.name)}&fmt=${importFormat}`, {
       method: 'POST',
       body: await file.arrayBuffer()
     });
@@ -730,7 +731,6 @@ async function handleFiles(fileList) {
   statusEl.textContent = duplicateCount
     ? `Done! Skipped ${duplicateCount} duplicate AWC table${duplicateCount === 1 ? '' : 's'}.`
     : 'Done!';
-  zipAllBtn.disabled = false;
 }
 
 function buildRowsHtml(tracks, availableGroupsByCategory) {
@@ -927,6 +927,7 @@ function renderGroup(data) {
 
   tbody._folderId = data.id;
   tbody._groupDisplayName = data.display_name;
+  tbody._sourceFileName = data.file;
   tbody._tracks = data.tracks;
   tbody._availableTrackGroupsByCategory = availableGroupsByCategory;
   tbody._visibleTracks = visibleTracks;
@@ -1085,8 +1086,141 @@ function renderGroup(data) {
   return true;
 }
 
-function downloadAllZip() {
-  window.location.href = '/zip_all';
+function safeExportFolderLabel(value) {
+  return String(value)
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+    .replace(/^[ .]+|[ .]+$/g, '');
+}
+
+function getExportFolderName(tbody) {
+  const folderId = safeExportFolderLabel(tbody._folderId).slice(0, 100) || 'Unknown';
+  const input = tbody.closest('.group').querySelector('.awc-display-name');
+  const displayName = input.value.trim();
+  const customName = displayName && displayName !== tbody._sourceFileName
+    ? safeExportFolderLabel(displayName).slice(0, 120)
+    : '';
+  return `TRACK_${folderId}${customName ? ` - ${customName}` : ''}`;
+}
+
+async function exportAll() {
+  const tables = Array.from(resultsEl.querySelectorAll('.group tbody'))
+    .filter(tbody => tbody._tracks);
+  const format = document.getElementById('exportFmt').value;
+  if (!['opus', 'ogg', 'wav', 'flac'].includes(format)) {
+    statusEl.textContent = `Unsupported export format: ${format}.`;
+    return;
+  }
+
+  const items = [];
+  const outputNames = new Set();
+  for (const tbody of tables) {
+    recomputeGroupDraftNames(tbody._tracks);
+    const targetFolder = getExportFolderName(tbody);
+    for (const track of tbody._tracks) {
+      const sourceName = track.name;
+      const baseName = (track.draftName || sourceName).replace(/\.[^.]+$/, '');
+      const outputName = `${baseName}.${format}`;
+      const outputKey = `${targetFolder}/${outputName}`.toLowerCase();
+      if (outputNames.has(outputKey)) {
+        statusEl.textContent = `Unable to export: multiple tracks would be named ${targetFolder}/${outputName}.`;
+        return;
+      }
+      outputNames.add(outputKey);
+      items.push({ folder: tbody._folderId, sourceName, outputName, targetFolder });
+    }
+  }
+
+  if (!items.length) {
+    statusEl.textContent = 'There are no tracks in open tables to export.';
+    return;
+  }
+  if (typeof window.showDirectoryPicker !== 'function') {
+    statusEl.textContent = 'Folder export is not supported in this browser.';
+    return;
+  }
+
+  let directoryHandle;
+  try {
+    directoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+  } catch (error) {
+    statusEl.textContent = error.name === 'AbortError'
+      ? 'Export cancelled.'
+      : `Unable to choose export folder: ${error.message}`;
+    return;
+  }
+
+  exportAllBtn.disabled = true;
+  let completed = 0;
+  const targetFolders = new Set(items.map(item => item.targetFolder.toLowerCase()));
+  const targetDirectories = new Map();
+  try {
+    for (const item of items) {
+      const folderKey = item.targetFolder.toLowerCase();
+      if (!targetDirectories.has(folderKey)) {
+        const targetDirectory = await directoryHandle.getDirectoryHandle(item.targetFolder, { create: true });
+        targetDirectories.set(folderKey, targetDirectory);
+      }
+    }
+
+    let nextItemIndex = 0;
+    let activeExports = 0;
+    let exportError = null;
+    const exportWorker = async () => {
+      while (!exportError) {
+        const itemIndex = nextItemIndex++;
+        if (itemIndex >= items.length) {
+          return;
+        }
+
+        const item = items[itemIndex];
+        activeExports++;
+        statusEl.textContent = `Exporting ${completed} of ${items.length} tracks (${activeExports} active)...`;
+        try {
+          const url = `/export_file/${encodeURIComponent(item.folder)}/${encodeURIComponent(item.sourceName)}?fmt=${encodeURIComponent(format)}`;
+          const response = await fetch(url);
+          if (!response.ok) {
+            throw new Error(`Unable to export ${item.sourceName} (${response.status})`);
+          }
+
+          const targetDirectory = targetDirectories.get(item.targetFolder.toLowerCase());
+          const fileHandle = await targetDirectory.getFileHandle(item.outputName, { create: true });
+          const writable = await fileHandle.createWritable();
+          try {
+            await writable.write(await response.blob());
+            await writable.close();
+          } catch (error) {
+            await writable.abort().catch(abortError => {
+              console.error(`Unable to abort writing ${item.outputName}:`, abortError);
+            });
+            throw error;
+          }
+          completed++;
+        } catch (error) {
+          if (!exportError) {
+            exportError = error;
+          }
+        } finally {
+          activeExports--;
+          statusEl.textContent = `Exporting ${completed} of ${items.length} tracks (${activeExports} active)...`;
+        }
+      }
+    };
+
+    const availableProcessors = Number.isInteger(navigator.hardwareConcurrency) && navigator.hardwareConcurrency > 0
+      ? navigator.hardwareConcurrency
+      : 4;
+    const workerCount = Math.min(availableProcessors, items.length);
+    await Promise.all(Array.from({ length: workerCount }, () => exportWorker()));
+    if (exportError) {
+      throw exportError;
+    }
+
+    statusEl.textContent = `Exported ${completed} track(s) to ${targetFolders.size} folder(s) in ${format.toUpperCase()} format.`;
+  } catch (error) {
+    statusEl.textContent = `Export stopped after ${completed} of ${items.length} tracks: ${error.message}`;
+  } finally {
+    refreshGroupNavigation();
+  }
 }
 
 async function clearWorkspace() {
@@ -1095,7 +1229,6 @@ async function clearWorkspace() {
   resultsEl.innerHTML = '';
   refreshGroupNavigation();
   statusEl.textContent = 'Cleared output folder.';
-  zipAllBtn.disabled = true;
   stopXfadeLoop();
   cancelAnimationFrame(rafId);
   player.pause();

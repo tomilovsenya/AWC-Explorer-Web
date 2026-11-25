@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import struct
 import subprocess
+import tempfile
 
 
 def _build_crc_table() -> tuple[int, ...]:
@@ -166,6 +167,48 @@ def convert_worker(blob: bytes, out_file_str: str, ext: str, serial: int):
     }
 
 
+def convert_audio_bytes(data: bytes, source_ext: str, target_ext: str) -> bytes:
+    source_ext = source_ext.lower()
+    target_ext = target_ext.lower()
+    supported_formats = {"opus", "ogg", "wav", "flac"}
+    if source_ext not in supported_formats or target_ext not in supported_formats:
+        raise ValueError("Unsupported audio format")
+    if (
+        source_ext == target_ext and target_ext != "flac"
+    ) or (source_ext in ("opus", "ogg") and target_ext in ("opus", "ogg")):
+        return data
+
+    command = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "-i", "pipe:0", "-map", "0:a:0",
+    ]
+    if target_ext in ("opus", "ogg"):
+        command.extend(["-c:a", "libopus", "-b:a", "128k", "-f", "ogg"])
+    elif target_ext == "wav":
+        command.extend(["-c:a", "pcm_s16le", "-f", "wav"])
+    else:
+        command.extend(["-c:a", "flac", "-compression_level", "8"])
+        with tempfile.TemporaryDirectory(prefix="awc-flac-") as temp_dir:
+            output_file = Path(temp_dir) / "output.flac"
+            subprocess.run(
+                command + [str(output_file)],
+                input=data,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+            return output_file.read_bytes()
+    command.append("pipe:1")
+    result = subprocess.run(
+        command,
+        input=data,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    return result.stdout
+
+
 _POOL: ProcessPoolExecutor | None = None
 
 
@@ -183,6 +226,26 @@ def _probe_wav(path: Path) -> tuple[int, float]:
         dur = max(0.0, (len(data) - 44) / byte_rate) if byte_rate else 0.0
         return ch, round(dur, 2)
     return 1, 0.0
+
+
+def _probe_flac(path: Path) -> tuple[int, float]:
+    data = path.read_bytes()
+    if len(data) < 42 or data[:4] != b"fLaC":
+        return 2, 0.0
+
+    block_header = data[4:8]
+    block_type = block_header[0] & 0x7F
+    block_size = int.from_bytes(block_header[1:4], "big")
+    if block_type != 0 or block_size != 34 or len(data) < 8 + block_size:
+        return 2, 0.0
+
+    stream_info = data[8:8 + block_size]
+    packed_fields = int.from_bytes(stream_info[10:18], "big")
+    sample_rate = packed_fields >> 44
+    channels = ((packed_fields >> 41) & 0x07) + 1
+    total_samples = packed_fields & ((1 << 36) - 1)
+    duration = total_samples / sample_rate if sample_rate else 0.0
+    return channels, round(duration, 2)
 
 
 def _probe_ogg_opus(path: Path) -> tuple[int, float]:
@@ -271,6 +334,8 @@ def _apply_saved_labels(base_id: str, work_dir: Path, tracks: list[dict], ext: s
                 _, dur = _probe_wav(f)
             elif ext.lower() in ("opus", "ogg"):
                 _, dur = _probe_ogg_opus(f)
+            elif ext.lower() == "flac":
+                _, dur = _probe_flac(f)
             else:
                 dur = 0.0
             by_sig.setdefault((f.stat().st_size, dur), []).append((tag, subgroup))
@@ -352,6 +417,8 @@ def get_cached_awc(filename: str, work_dir: Path, ext: str) -> dict | None:
             ch, dur = _probe_wav(f)
         elif ext.lower() in ("opus", "ogg"):
             ch, dur = _probe_ogg_opus(f)
+        elif ext.lower() == "flac":
+            ch, dur = _probe_flac(f)
         else:
             ch, dur = 2, 0.0
         tracks.append({

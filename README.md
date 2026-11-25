@@ -19,7 +19,7 @@ A fast, multi-core `.awc` (Audio Wave Container) extractor and browser-based aud
   * **Single Playback & Auto-Next:** Prevents overlapping playback and, when enabled, advances to the next table track after category assignment or subgroup assignment, change, or clearing, using the prior table order.
   * **Keyboard Shortcuts:** `Space` to Play/Pause, `↑` / `↓` to step tracks, `0`–`9` to set categories, and `A`–`D` to assign pattern groups. Use `+` in a category to reveal additional groups through `H`.
 * **Editable AWC Names & Track Labels:** Rename each imported AWC in its tracklist; `labels.json` stores each original track filename once with its category and optional A–H pattern group. Groups A–D are shown by default; use `+` to reveal E–H for a category as needed. Group letters appear in renamed tracks and sort within each category. Use **JUNK** for broken files; it has no pattern groups. Narrow layouts use compact category keys with an expandable legend, track sort controls, and truncated long names. Track names omit file extensions, shown once as the AWC format.
-* **Sortable Tracklists & Batch ZIPs:** Sort streams by **Output Path**, **Category**, **Duration**, or **File Size**, save labeled tracks to `TRACK_<ID> - <Name>/`, and download individual `<ID>.zip` archives or all extracted folders at once.
+* **Sortable Tracklists & Exports:** Sort streams by **Output Path**, **Category**, **Duration**, or **File Size**; AWC tracks are imported as OPUS, with an independent Export All format selector; export tracks from open tables concurrently (up to the browser-reported logical processor count) to separate `TRACK_<ID> - <Name>/` folders (using the custom AWC name when set); FLAC exports use compression level 8 and retain duration metadata; save labeled tracks to `TRACK_<ID> - <Name>/`; or download individual `<ID>.zip` archives.
 
 ---
 
@@ -54,7 +54,7 @@ A fast, multi-core `.awc` (Audio Wave Container) extractor and browser-based aud
 
    Alternatively, you can open the .py file with Python.
 3. Your browser will open automatically to `http://127.0.0.1:8765`.
-4. Select your desired output format (`OPUS`, `WAV`, `OGG`, or `FLAC`) and drag and drop one or more `.awc` files anywhere onto the page.
+4. Drag and drop one or more `.awc` files anywhere onto the page; they are imported as `OPUS`. Select the independent export format before using **Export All**.
 5. Extracted tracks are saved automatically to:
    ```text
    output/<ID>/<ID>_BIT_01.opus

@@ -14,6 +14,7 @@
   h1 { margin: 0; font-size: 1.4rem; }
   .brand-logo { display: block; width: 160px; height: 40px; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
   .controls { display: flex; gap: 12px; align-items: center; }
+  .format-control { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.9rem; white-space: nowrap; }
   select, button { background: var(--card); color: var(--text); border: 1px solid #2d3244; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; }
   button.secondary { background: var(--accent2); border-color: var(--accent2); color: #fff; font-weight: 500; }
   button.danger { background: #ef4444; border-color: #ef4444; color: #fff; font-weight: 500; }
@@ -157,6 +158,8 @@
     .controls { flex-wrap: wrap; gap: 6px; }
     .controls .toggle { flex: 1 1 calc(50% - 4px); justify-content: center; min-width: 0; padding: 6px 7px; font-size: 0.75rem; }
     .controls select, .controls button { flex: 1 1 40%; min-width: 0; padding: 7px 8px; font-size: 0.78rem; }
+    .controls .format-control { flex: 1 1 calc(50% - 4px); min-width: 0; justify-content: space-between; font-size: 0.78rem; }
+    .controls .format-control select { flex: 1 1 0; }
     #dropzone { padding: 24px 12px; }
     #globalDropOverlay .overlay-box { margin: 12px; padding: 32px 18px; }
     #groupNav { top: auto; right: 8px; bottom: 122px; left: 8px; flex-direction: row; align-items: center; width: auto; max-width: none; max-height: 42px; overflow-x: auto; overflow-y: hidden; }
@@ -219,14 +222,17 @@
     <h1><img class="brand-logo" src="/logo.svg" alt="AWC Explorer" draggable="false"></h1>
     <div class="controls">
       <label class="toggle" title="Play next bit automatically after labeling current bit"><input type="checkbox" id="autoPlayOnLabel" checked><span>Auto-Next on Label</span></label>
-      <label class="toggle" title="Automatically re-sort by category when currently sorted by Category"><input type="checkbox" id="autoResortOnLabel" checked><span>Auto Re-Sort on Label</span></label>      <label for="fmt" style="color:var(--muted);font-size:0.9rem;">Format:</label>
-      <select id="fmt">
-        <option value="opus" selected>OPUS (Lossless Copy)</option>
-        <option value="wav">WAV (PCM 16-bit)</option>
-        <option value="ogg">OGG (Lossless Copy)</option>
-        <option value="flac">FLAC (Lossless)</option>
-      </select>
-      <button id="zipAllBtn" class="secondary" disabled onclick="downloadAllZip()">Download All (.ZIP)</button>
+      <label class="toggle" title="Automatically re-sort by category when currently sorted by Category"><input type="checkbox" id="autoResortOnLabel" checked><span>Auto Re-Sort on Label</span></label>
+      <label class="format-control" title="Format used by Export All">
+        <span>Export:</span>
+        <select id="exportFmt">
+          <option value="opus" selected>OPUS (copy when possible)</option>
+          <option value="wav">WAV (PCM 16-bit)</option>
+          <option value="ogg">OGG (copy when possible)</option>
+          <option value="flac">FLAC (Lossless)</option>
+        </select>
+      </label>
+      <button id="exportAllBtn" class="secondary" disabled onclick="exportAll()">Export All</button>
       <button onclick="clearWorkspace()" class="danger" title="Remove everything from ./output folder?">Clear</button>
     </div>
   </header>
